@@ -2616,72 +2616,111 @@ function setupDragAndDrop() {
   setupZone('drop-zone-backup', 'backup-zip-file', 'backup');
 }
 
-// Sync files from local S: drive database
+// Sync data up to Cloud — ส่งข้อมูลแบบ chunk เพื่อหลีกเลี่ยง "Too many API requests"
 async function runCloudSyncSimulation() {
   const btn = document.querySelector('#scr-sync button.btn-primary');
   const oldText = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลดข้อมูลจากไดรฟ์ S: ขึ้น Cloud...';
-  
-  try {
-    const payload = {
-      customers: db.customers || [],
-      tickets: db.tickets || [],
-      payments: db.payments || [],
-      sync_time: new Date().toISOString()
-    };
-    
-    const response = await fetch('/api/sync', {
+
+  // Helper: แบ่ง array เป็น chunks
+  const chunkArray = (arr, size) => {
+    const chunks = [];
+    for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
+    return chunks;
+  };
+
+  // Helper: POST chunk ไปยัง /api/sync
+  const postChunk = async (payload) => {
+    const res = await fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    
-    let result = { success: false };
+    let r = { success: false };
+    try { r = await res.json(); } catch(e) { r = { success: res.ok }; }
+    if (!res.ok && !r.success) throw new Error(r.error || `HTTP ${res.status}`);
+    return r;
+  };
+
+  try {
+    // ดึงข้อมูลล่าสุดจาก KV (ที่ db_sync.py อัปโหลดไว้)
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังดึงข้อมูลจาก Cloud KV...';
+    let customers = db.customers || [];
+    let tickets   = db.tickets   || [];
+    let payments  = db.payments  || [];
+
     try {
-      result = await response.json();
-    } catch(err) {
-      result = { success: true, message: 'บันทึกข้อมูลเรียบร้อยแล้ว' };
-    }
-    
-    if (result.success || response.ok) {
-      try {
-        const syncDataRes = await fetch('/last_cloud_sync.json?t=' + Date.now());
-        if (syncDataRes.ok) {
-          const syncData = await syncDataRes.json();
-          if (syncData && syncData.tickets && syncData.customers && syncData.tickets.length > 0) {
-            db.tickets = normalizeKeys(syncData.tickets);
-            db.customers = normalizeKeys(syncData.customers);
-            saveDBTable('tickets');
-            saveDBTable('customers');
-          }
+      const kvRes = await fetch('/api/sync?t=' + Date.now());
+      if (kvRes.ok) {
+        const kvData = await kvRes.json();
+        if (kvData && kvData.tickets && kvData.tickets.length > 0) {
+          tickets   = normalizeKeys(kvData.tickets);
+          customers = normalizeKeys(kvData.customers || []);
+          payments  = normalizeKeys(kvData.payments  || []);
+          // บันทึกลง local db ด้วย
+          db.tickets   = tickets;
+          db.customers = customers;
+          db.payments  = payments;
+          saveDBTable('tickets');
+          saveDBTable('customers');
+          saveDBTable('payments');
         }
-      } catch(e) {}
-      
-      const timestampStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-      
-      db.sync.unshift({
-        timestamp: timestampStr,
-        status: 'สำเร็จ (Overwrote Cloud)',
-        count: `ซิงค์ข้อมูลเรียบร้อย (${db.tickets.length} ตั๋ว / ${db.customers.length} ลูกค้า / ${(db.payments||[]).length} การชำระ)`
-      });
-      
-      saveDBTable('sync');
-      renderSyncHistory();
-      renderAll();
-      
-      alert('ดึงข้อมูลจากไดรฟ์ S: และอัปโหลดข้อมูลขึ้น Cloud Database สำเร็จเรียบร้อย!\nระบบ Cloud ปรับปรุงข้อมูลลูกค้าและตั๋วปัจจุบันเป็นคีย์ล่าสุดแล้ว');
-    } else {
-      alert('การเชื่อมต่อ/ดึงข้อมูลล้มเหลว: ' + (result.error || 'ไม่สามารถเข้าถึงไฟล์ระบบได้'));
+      }
+    } catch(e) { /* ใช้ข้อมูลใน local db แทน */ }
+
+    // ส่งข้อมูลขึ้น D1 แบบ chunk (500 records ต่อครั้ง)
+    const CHUNK_SIZE = 500;
+    const custChunks = chunkArray(customers, CHUNK_SIZE);
+    const tickChunks = chunkArray(tickets, CHUNK_SIZE);
+    const totalChunks = custChunks.length + tickChunks.length;
+    let doneChunks = 0;
+
+    // --- Upload Customers ---
+    for (let i = 0; i < custChunks.length; i++) {
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ลูกค้า ${Math.min((i+1)*CHUNK_SIZE, customers.length)}/${customers.length} (chunk ${++doneChunks}/${totalChunks})`;
+      await postChunk({ customers: custChunks[i], tickets: [], payments: [], sync_time: new Date().toISOString() });
     }
+
+    // --- Upload Tickets ---
+    for (let i = 0; i < tickChunks.length; i++) {
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ตั๋ว ${Math.min((i+1)*CHUNK_SIZE, tickets.length)}/${tickets.length} (chunk ${++doneChunks}/${totalChunks})`;
+      await postChunk({ customers: [], tickets: tickChunks[i], payments: [], sync_time: new Date().toISOString() });
+    }
+
+    // --- Upload Payments (ถ้ามี) ---
+    if (payments.length > 0) {
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> กำลังส่งการชำระ ${payments.length} รายการ...`;
+      for (const chunk of chunkArray(payments, CHUNK_SIZE)) {
+        await postChunk({ customers: [], tickets: [], payments: chunk, sync_time: new Date().toISOString() });
+      }
+    }
+
+    // บันทึก sync log
+    const timestampStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    db.sync.unshift({
+      timestamp: timestampStr,
+      status: 'สำเร็จ (D1 + KV)',
+      count: `ซิงค์สำเร็จ: ${tickets.length} ตั๋ว / ${customers.length} ลูกค้า / ${payments.length} การชำระ`
+    });
+    saveDBTable('sync');
+    renderSyncHistory();
+    renderAll();
+
+    alert(`✅ ซิงค์ข้อมูลขึ้น Cloud สำเร็จ!\n\n` +
+      `  • ตั๋วจำนำ  : ${tickets.length.toLocaleString()} รายการ\n` +
+      `  • ลูกค้า   : ${customers.length.toLocaleString()} รายการ\n` +
+      `  • การชำระ  : ${payments.length.toLocaleString()} รายการ\n\n` +
+      `ข้อมูลถูกบันทึกเข้า Cloudflare D1 + KV แล้ว`);
+
   } catch (error) {
     console.error(error);
-    alert('เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์ระบบ: ' + error.message);
+    alert('เกิดข้อผิดพลาดในการซิงค์ข้อมูล: ' + error.message);
   } finally {
     btn.disabled = false;
     btn.innerHTML = oldText;
   }
 }
+
 
 // Refresh all visible admin/customer panels after a data sync
 function renderAll() {

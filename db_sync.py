@@ -350,37 +350,30 @@ def run_db_sync(mock_mode=False):
         f.write(payload_str)
     print(f"[*] บันทึกสำเนาไฟล์ซิงค์ล่าสุดที่: {local_sync_file}")
     
-    # Upload to Cloudflare KV (cache)
+    # Upload to Cloudflare KV (cache/fallback)
     success, result = upload_to_cloudflare_kv("db_sync_latest", payload_str)
     
     if success:
         print(f"[+] ซิงค์ข้อมูลขึ้น Cloudflare KV สำเร็จ! API Response: {result}")
+        print(f"\n{'='*50}")
+        print(f"  สรุปผลการซิงค์ข้อมูล:")
+        print(f"  - ตั๋วจำนำ  : {len(tickets_data):,} รายการ")
+        print(f"  - ลูกค้า   : {len(customers_data):,} รายการ")
+        print(f"  - การชำระ  : {len(payments_data):,} รายการ")
+        print(f"{'='*50}")
+        print(f"  ข้อมูลถูกบันทึกไว้ใน Cloudflare KV แล้ว")
+        print(f"  หลังจากนี้ กด 'เริ่มอัปเดตข้อมูลขึ้น Cloud' ในหน้าผู้ดูแลระบบ")
+        print(f"  เพื่อบันทึกข้อมูลเข้า D1 SQL Database ด้วย")
+        print(f"{'='*50}\n")
     else:
-        print("[*] (จำลองการทำงาน) ส่งข้อมูลอัปเดตไปยัง Cloudflare DNS: EZY-Pawnshop2006.rainbow-ocean.site")
-        print("    [!] หมายเหตุ: ข้ามการเชื่อมต่อเครือข่ายจริงเนื่องจากสิทธิ์การอนุมัติ / คีย์เริ่มต้น")
-        print("    [+] ปรับปรุงแฟ้มข้อมูลลูกค้า (Customer) และ ตั๋วจำนำ (Ticket) บนระบบคลาวด์เรียบร้อยแล้ว!")
+        print("    [!] KV upload ไม่สำเร็จ — ตรวจสอบ API Token / Network")
 
-    # Upload to Cloudflare D1 SQL via Pages Function API
-    d1_endpoints = [
-        "https://EZY-Pawnshop2006.rainbow-ocean.site/api/sync",
-        "https://ezy-pawnshop-web.pages.dev/api/sync"
-    ]
-    d1_success = False
-    for ep in d1_endpoints:
-        try:
-            print(f"[*] กำลังส่งข้อมูลไปยัง Cloudflare D1 ({ep})...")
-            req = urllib.request.Request(ep, data=payload_str.encode('utf-8'), headers={"Content-Type": "application/json"}, method='POST')
-            with urllib.request.urlopen(req, timeout=30, context=_ssl_ctx) as response:
-                res_body = response.read().decode('utf-8')
-                print(f"[+] ซิงค์ข้อมูล D1 สำเร็จ! (ticket {len(tickets_data)}, customer {len(customers_data)}, payment {len(payments_data)} รายการ) Response: {res_body}")
-                d1_success = True
-                break
-        except Exception as e:
-            print(f"    [!] {ep}: {e}")
-    if not d1_success:
-        print("    [!] ไม่สามารถส่งข้อมูลไปยัง D1 ได้ในรอบนี้")
-
+    # หมายเหตุ: ไม่ส่ง D1 จาก Python เพราะ:
+    # 1. ข้อมูลขนาดใหญ่ (7,000+ ตั๋ว) ทำให้ Cloudflare Pages Function reject ด้วย 403
+    # 2. KV เป็น cache หลัก - web app จะ sync KV → D1 อัตโนมัติเมื่อกดปุ่มในหน้า Admin
     print("="*50 + "\n")
+
+
 
 def run_db_backup(date_str=None, mock_mode=False):
     """Locates the local backup zip file and uploads it to Cloudflare R2 storage."""
