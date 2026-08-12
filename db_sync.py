@@ -71,8 +71,31 @@ MYSQL_DB = 'pawnshop'
 # Cloudflare Configuration
 # Email: bigyee999@gmail.com
 # DNS: EZY-Pawnshop2006.rainbow-ocean.site
-CF_ACCOUNT_ID = '17bdd980316fec191fd0597e89d5afe9'
-CF_API_TOKEN = 'cfut_vrJy2H3p4hSnfTknLv8AxL5v2rV9mhCxFxnLHBjM2ecd9556'
+CF_ACCOUNT_ID  = '17bdd980316fec191fd0597e89d5afe9'
+# *** API Token: อ่านจากไฟล์ option.ini หรือ Environment Variable ***
+# เพื่อความปลอดภัย ไม่เก็บ token ใน source code
+def _load_cf_token():
+    # 1. ลองอ่านจาก option.ini
+    ini_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'option.ini')
+    if os.path.exists(ini_path):
+        try:
+            import configparser
+            cfg = configparser.ConfigParser()
+            cfg.read(ini_path, encoding='utf-8')
+            tok = cfg.get('cloudflare', 'api_token', fallback=None) or \
+                  cfg.get('DEFAULT', 'CF_API_TOKEN', fallback=None)
+            if tok and tok.strip():
+                return tok.strip()
+        except Exception:
+            pass
+    # 2. ลองอ่านจาก Environment Variable
+    tok = os.environ.get('CF_API_TOKEN', '')
+    if tok:
+        return tok
+    # 3. Fallback: ใส่ token ตรงนี้ (ถ้าไม่ต้องการใช้ config file)
+    return 'PUT_YOUR_CLOUDFLARE_API_TOKEN_HERE'
+
+CF_API_TOKEN   = _load_cf_token()
 CF_KV_NAMESPACE = 'cfdeabd671c94f9bafdbba5b1c41316f'
 CF_R2_ENDPOINT = f'https://{CF_ACCOUNT_ID}.r2.cloudflarestorage.com'
 CF_R2_BUCKET = 'ezy-pawnshop-backups'

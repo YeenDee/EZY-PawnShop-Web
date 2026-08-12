@@ -1,0 +1,4 @@
+﻿option.ini
+last_cloud_sync.json
+*.log
+__pycache__/
