@@ -1,0 +1,29 @@
+name = "ezy-pawnshop-web"
+compatibility_date = "2024-04-01"
+pages_build_output_dir = "./"
+
+# ==================== CLOUDFLARE CONFIGURATION ====================
+# Account: bigyee999@gmail.com  (ID: 17bdd980316fec191fd0597e89d5afe9)
+# Custom Domain / DNS: EZY-Pawnshop2006.rainbow-ocean.site
+# ==================================================================
+
+[vars]
+ENVIRONMENT = "production"
+SHOP_NAME = "EZY Pawnshop 2006"
+CUSTOM_DOMAIN = "EZY-Pawnshop2006.rainbow-ocean.site"
+
+# Cloudflare KV Namespace Binding (Real ID)
+[[kv_namespaces]]
+binding = "PAWNSHOP_KV"
+id = "cfdeabd671c94f9bafdbba5b1c41316f"
+
+# Cloudflare D1 SQL Database Binding (Real ID)
+[[d1_databases]]
+binding = "DB"
+database_name = "pawnshop_db"
+database_id = "e2e13521-f66b-4fef-8542-c7d97da9311a"
+
+# Cloudflare R2 Bucket Binding for Daily Backup Zip Storage (pawnshop-yyyy_mm_dd.zip)
+[[r2_buckets]]
+binding = "BACKUP_BUCKET"
+bucket_name = "ezy-pawnshop-backups"

@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>EZY Pawnshop 2006 Web App</title>
+  
+  <!-- PWA Meta Tags -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#B30006">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/x-icon" href="Logo.ico">
+  <link rel="apple-touch-icon" href="icon-192.png">
+
+  <!-- CSS Stylesheets -->
+  <link rel="stylesheet" href="app.css?v=42">
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+  <div id="app">
+    
+    <!-- ==================== 1. LOGIN SCREEN ==================== -->
+    <div id="login-view" class="login-view fade-in-el">
+      <div class="login-logo-container">
+        <img src="Logo.ico" alt="EZY Pawnshop Logo">
+        <h2>EZY PAWNSHOP 2006</h2>
+        <p>WEB APPLICATION PORTAL</p>
+      </div>
+      
+      <form id="login-form" onsubmit="event.preventDefault(); handleLogin();">
+        <div class="form-group">
+          <label for="login-id"><i class="fa-solid fa-address-card"></i> เลขประจำตัวประชาชน (Id)</label>
+          <input type="text" id="login-id" class="input-field" placeholder="x-xxxx-xxxxx-xx-x" required autocomplete="off" inputmode="numeric">
+        </div>
+        
+        <div class="form-group">
+          <label for="login-contact"><i class="fa-solid fa-phone"></i> เบอร์โทรศัพท์ หรือ รหัสผ่าน</label>
+          <div style="position: relative; display: flex; align-items: center;">
+            <input type="password" id="login-contact" class="input-field" placeholder="เบอร์โทรศัพท์ (ลูกค้า) / รหัสผ่าน (พนักงาน)" required inputmode="numeric" style="padding-right: 42px;">
+            <i id="toggle-login-contact" class="fa-solid fa-eye-slash" onclick="togglePasswordVisibility('login-contact', 'toggle-login-contact')" style="position: absolute; right: 14px; cursor: pointer; color: var(--text-medium); font-size: 16px; z-index: 10; padding: 6px;" title="แสดง/ซ่อนข้อมูล"></i>
+          </div>
+        </div>
+        
+        <button type="submit" class="btn btn-primary" style="margin-top: 10px;">
+          <i class="fa-solid fa-right-to-bracket"></i> เข้าสู่ระบบ
+        </button>
+      </form>
+      
+      <div style="text-align: center; margin-top: 24px; display: none;">
+        <button type="button" class="btn btn-secondary" style="width: auto; padding: 8px 16px; font-size: 13px; border-radius: var(--radius-sm);" onclick="resetDatabase()">
+          <i class="fa-solid fa-arrows-rotate"></i> ล้างข้อมูลเพื่อทดสอบใหม่ (Reset Data)
+        </button>
+      </div>
+      
+      <div id="login-error-msg" class="otp-simulated-sms hidden" style="background-color: #fff0f0; border-color: #ff3b30; color: #ff3b30; margin-top: 20px;">
+        <!-- Error text will be dynamically inserted here -->
+      </div>
+    </div>
+
+    <!-- ==================== 2. OTP MODAL DIALOG ==================== -->
+    <div id="otp-modal" class="modal-overlay">
+      <div class="modal-content">
+        <div class="otp-icon"><i class="fa-solid fa-shield-halved"></i></div>
+        <h3>ยืนยันรหัส OTP</h3>
+        <p style="font-size: 13px; color: var(--text-medium); margin-top: 6px;">ระบบได้ส่งรหัส OTP ไปยังเบอร์โทรศัพท์ของท่านแล้ว</p>
+        
+        <!-- Mock SMS Notification Banner -->
+        <div class="otp-simulated-sms">
+          <strong><i class="fa-solid fa-comment-sms"></i> Line SMS:</strong><br>
+          รหัสยืนยันการเข้าสู่ระบบ EZY Pawnshop คือ <span id="mock-otp-code" class="number" style="font-weight: 700; color: var(--primary-red); letter-spacing: 1px;">XXXXXX</span> (ใช้สำหรับทดสอบ)
+        </div>
+        
+        <div class="otp-inputs">
+          <input type="text" maxlength="1" class="otp-box" oninput="moveOtpFocus(this, 1)" id="otp-1" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" oninput="moveOtpFocus(this, 2)" id="otp-2" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" oninput="moveOtpFocus(this, 3)" id="otp-3" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" oninput="moveOtpFocus(this, 4)" id="otp-4" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" oninput="moveOtpFocus(this, 5)" id="otp-5" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" oninput="moveOtpFocus(this, 6)" id="otp-6" inputmode="numeric">
+        </div>
+        
+        <div style="display: flex; gap: 12px;">
+          <button type="button" class="btn btn-secondary" onclick="closeOtpModal()"><i class="fa-solid fa-xmark"></i> ยกเลิก</button>
+          <button type="button" class="btn btn-primary" onclick="verifyOtp()"><i class="fa-solid fa-circle-check"></i> ยืนยัน</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 3. CUSTOMER PORTAL VIEW ==================== -->
+    <div id="client-portal" class="hidden" style="flex: 1; display: flex; flex-direction: column;">
+      
+      <!-- Sticky Header -->
+      <header class="app-header">
+        <img src="Logo.ico" alt="Logo">
+        <div class="title-group">
+          <h1>EZY Pawnshop2006</h1>
+          <p>บริการสำหรับลูกค้าทั่วไป</p>
+        </div>
+        <button class="btn btn-outline" style="width: auto; padding: 6px 12px; font-size: 13px; margin-left: auto; border-radius: var(--radius-sm);" onclick="logout()">
+          <i class="fa-solid fa-arrow-right-from-bracket"></i> ออกจากระบบ
+        </button>
+      </header>
+
+      <!-- Main Tab Content viewport -->
+      <main class="main-content">
+        
+        <!-- Tab 1: หน้าแรก (Home) -->
+        <section id="tab-home" class="tab-screen active">
+          <!-- Profile Card -->
+          <div class="profile-card">
+            <h3><i class="fa-solid fa-user-gear"></i> ข้อมูลลูกค้า</h3>
+            <div class="profile-info-row">
+              <p class="profile-info-label">ชื่อ - นามสกุล</p>
+              <p id="cust-name" class="profile-info-val name">-</p>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <div class="profile-info-row">
+                <p class="profile-info-label">เลขบัตรประชาชน</p>
+                <p id="cust-id" class="profile-info-val number">-</p>
+              </div>
+              <div class="profile-info-row">
+                <p class="profile-info-label">เบอร์โทรศัพท์</p>
+                <p id="cust-tel" class="profile-info-val number">-</p>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Summary Stats -->
+          <div class="stats-container">
+            <div class="stat-box highlighted">
+              <h4>จำนวนตั๋วจำนำ</h4>
+              <p class="value"><span id="cust-ticket-count" class="number">0</span> ใบ</p>
+            </div>
+            <div class="stat-box highlighted">
+              <h4>ยอดจำนำรวม</h4>
+              <p class="value"><span id="cust-ticket-sum" class="number">0</span> <span style="font-size: 13px;">บาท</span></p>
+            </div>
+          </div>
+          
+          <!-- Interest Calculation Banner -->
+          <div class="interest-calc-banner" style="display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 20px;">
+            <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+              <i class="fa-solid fa-calculator" style="font-size: 24px; color: var(--accent-gold);"></i>
+              <div class="interest-calc-text" style="flex: 1;">
+                <p style="font-size: 15px; font-weight: 700; margin-bottom: 2px;">
+                  ดอกเบี้ยรวม <span id="cust-interest-sum-val" class="number" style="color: var(--accent-gold); font-size: 18px;">0.00</span> บาท 
+                  <span style="font-size: 12px; font-weight: 500; opacity: 0.9;">(คำนวณ ณ วันที่ <span id="cust-interest-calc-date" class="number">--/--/----</span>)</span>
+                </p>
+              </div>
+            </div>
+            <div style="font-size: 12px; color: var(--primary-red); line-height: 1.5; border-top: 1px dashed var(--primary-red); padding-top: 8px; width: 100%; font-weight: 700;">
+              <strong style="font-size: 14.5px; text-decoration: underline;">หมายเหตุ:</strong> เป็นการคำนวณยอดเงินดอกเบี้ยโดยประมาณ ถ้ามีความประสงค์จะชำระจริง ให้สอบถามกับเจ้าหน้าที่ก่อนอีกครั้ง
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 2: ตั๋วรับจำนำ (Tickets List) -->
+        <section id="tab-tickets" class="tab-screen">
+          <h3 style="font-size: 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+            <i class="fa-solid fa-receipt" style="color: var(--primary-red);"></i> ตั๋วรับจำนำปัจจุบันของคุณ
+          </h3>
+          <div id="tickets-list-container" class="ticket-list-container">
+            <!-- Dynamic Ticket Cards go here -->
+          </div>
+        </section>
+
+        <!-- Tab 3: ส่งดอก (Pay Interest) -->
+        <section id="tab-pay" class="tab-screen">
+          <!-- SUBVIEW A: SELECT TICKETS -->
+          <div id="pay-select-tickets-view">
+            <div class="flex-row-between" style="margin-bottom: 16px;">
+              <h3 style="font-size: 16px; display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-circle-dollar-to-slot" style="color: var(--primary-red);"></i> เลือกตั๋วจำนำเพื่อชำระดอกเบี้ย
+              </h3>
+              <button id="btn-select-all" class="btn btn-secondary" style="width: auto; padding: 6px 12px; font-size: 13px; border-radius: var(--radius-sm);" onclick="toggleSelectAllTickets()">
+                <i class="fa-solid fa-check-double"></i> เลือกทั้งหมด
+              </button>
+            </div>
+            
+            <p style="font-size: 13px; color: var(--text-medium); margin-bottom: 12px;">แตะตั๋วใบที่ต้องการเพื่อเลือกชำระเงิน (ตั๋วที่เลือกจะเปลี่ยนเป็นสีเหลือง)</p>
+            
+            <div id="pay-ticket-list" class="selectable-ticket-list">
+              <!-- Selectable Tickets go here -->
+            </div>
+            
+            <div class="pay-interest-action-bar">
+              <button id="btn-confirm-pay-interest" class="btn btn-gold hidden" onclick="showPaymentDetailsScreen()">
+                <i class="fa-solid fa-money-bill-transfer"></i> ยืนยันชำระดอกเบี้ย (เลือกไว้ <span id="selected-tickets-count">0</span> ใบ)
+              </button>
+            </div>
+          </div>
+
+          <!-- SUBVIEW B: PAYMENT DETAILS -->
+          <div id="pay-details-screen" class="payment-flow-container hidden">
+            <button class="btn btn-secondary" style="width: auto; padding: 8px 14px; font-size: 13px; display: inline-flex; align-self: flex-start;" onclick="hidePaymentDetailsScreen()">
+              <i class="fa-solid fa-chevron-left"></i> ย้อนกลับไปเลือกตั๋ว
+            </button>
+            
+            <div class="card card-red-border" style="margin-bottom: 0;">
+              <h3 style="font-size: 16px; margin-bottom: 12px; color: var(--primary-red);"><i class="fa-solid fa-wallet"></i> บัญชีธนาคารสำหรับโอนเงิน</h3>
+              
+              <div class="bank-info-card">
+                <div class="bank-logo" id="cfg-bank-logo">KB</div>
+                <div class="bank-details">
+                  <h4 id="cfg-bank-name">ธนาคารกสิกรไทย</h4>
+                  <div style="display: flex; align-items: center; gap: 8px; margin: 4px 0;">
+                    <span class="bank-acc-no number" id="cfg-bank-acc">123-4-56789-0</span>
+                    <button class="copy-btn" onclick="copyBankAccount()" title="คัดลอกเลขบัญชี"><i class="fa-regular fa-copy"></i></button>
+                  </div>
+                  <p>ชื่อบัญชี: <strong id="cfg-bank-acc-name">บจก. อีซี่ โรงรับจำนำ 2006</strong></p>
+                </div>
+              </div>
+            </div>
+            
+            <div class="card card-gold-border" style="margin-bottom: 0;">
+              <h3 style="font-size: 15px; margin-bottom: 12px;"><i class="fa-solid fa-circle-info"></i> สรุปยอดเงินที่ต้องชำระ</h3>
+              <div class="flex-row-between" style="font-size: 14px; margin-bottom: 8px;">
+                <span>ตั๋วที่เลือกชำระ:</span>
+                <span><strong id="summary-pay-count">0</strong> ใบ</span>
+              </div>
+              <div class="flex-row-between" style="font-size: 14px; border-top: 1px solid var(--border-light); padding-top: 8px;">
+                <span><strong>ยอดรวมดอกเบี้ยที่ต้องโอน:</strong></span>
+                <span class="number" style="font-size: 18px; font-weight: 700; color: var(--primary-red);"><span id="summary-pay-total">0.00</span> บาท</span>
+              </div>
+            </div>
+            
+            <div class="card" style="margin-bottom: 0;">
+              <h3 style="font-size: 15px; margin-bottom: 12px;"><i class="fa-solid fa-cloud-arrow-up"></i> ส่งหลักฐานการชำระเงิน</h3>
+              
+              <!-- Single Date Time Picker Button -->
+              <div class="form-group">
+                <label for="payment-datetime-input"><i class="fa-regular fa-clock"></i> วันและเวลาที่โอน (ตามสลิป)</label>
+                <div style="position: relative; width: 100%; cursor: pointer;" onclick="triggerDateTimePicker()">
+                  <div id="payment-date-btn" class="btn btn-secondary" style="width: 100%; font-size: 14px; justify-content: space-between; pointer-events: none;">
+                    <span id="payment-datetime-text">เลือก วันที่ และ เวลาชำระเงิน</span>
+                    <i class="fa-regular fa-calendar-days"></i>
+                  </div>
+                  <input type="datetime-local" id="payment-datetime-input" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0.01; cursor: pointer; z-index: 10; margin: 0; padding: 0; border: none; background: transparent; -webkit-appearance: none;" onchange="onDateTimeSelected()" onclick="event.stopPropagation();">
+                </div>
+              </div>
+              
+              <!-- Slip Upload Area -->
+              <div class="form-group">
+                <label><i class="fa-regular fa-image"></i> ภาพสลิปหลักฐานการโอนเงิน</label>
+                <div class="slip-upload-box" onclick="showSlipOptionsModal()">
+                  <i class="fa-solid fa-file-image upload-icon" id="slip-placeholder-icon"></i>
+                  <p id="slip-placeholder-text">กดเพื่อ เลือกรูปภาพ หรือ ถ่ายภาพสลิป</p>
+                  <img id="slip-preview" class="slip-preview-img hidden" alt="Slip Preview">
+                </div>
+              </div>
+              
+              <!-- Submit Button -->
+              <button class="btn btn-primary" onclick="submitPayment()" style="margin-top: 10px;">
+                <i class="fa-solid fa-paper-plane"></i> ส่งหลักฐานการชำระเงิน
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 4: คู่มือผู้ใช้งาน (Customer Help Manual) -->
+        <section id="tab-help" class="tab-screen help-view">
+          <h3 style="font-size: 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+            <i class="fa-solid fa-circle-question" style="color: var(--primary-red);"></i> คู่มือการใช้งานสำหรับลูกค้า
+          </h3>
+          
+          <div class="help-section">
+            <h3>1. การล็อกอินเข้าสู่ระบบ</h3>
+            <div class="help-step">
+              <strong>ขั้นตอน:</strong>
+              <p>กรอกเลขบัตรประชาชน 13 หลัก และเบอร์โทรศัพท์มือถือที่แจ้งไว้กับโรงรับจำนำ จากนั้นระบบจะแสดงรหัสผ่าน OTP เพื่อยืนยันตัวตนความปลอดภัย</p>
+            </div>
+          </div>
+
+          <div class="help-section">
+            <h3>2. การชำระเงิน/ส่งดอกเบี้ย</h3>
+            <div class="help-step">
+              <strong>ขั้นตอน:</strong>
+              <p>ไปที่เมนู "ส่งดอก" -> เลือกตั๋วจำนำที่ต้องการ (พื้นหลังตั๋วจะเปลี่ยนเป็นสีเหลือง) -> กดยืนยันชำระดอกเบี้ย -> ทำการโอนเงินไปยังบัญชีธนาคารโรงรับจำนำ -> แนบรูปภาพสลิป เลือกวันเวลาโอนให้ถูกต้อง -> กดยืนยันส่งหลักฐาน</p>
+            </div>
+          </div>
+
+          <div class="help-section">
+            <h3>3. การตรวจสอบสถานะตั๋ว</h3>
+            <div class="help-step">
+              <strong>ขั้นตอน:</strong>
+              <p>ไปที่เมนู "ตั๋วรับจำนำ" ตั๋วที่ส่งสลิปแล้วจะแสดงสถานะ <strong>[กำลังตรวจสอบ]</strong> เมื่อพนักงานอนุมัติแล้วจะเปลี่ยนเป็น <strong>[ชำระแล้ว]</strong> และระบบจะออกตั๋วใบใหม่ขึ้นมาแทนทันที</p>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Bottom Nav Bar -->
+      <nav class="bottom-nav">
+        <div class="nav-item active" onclick="switchCustomerTab('home', this)">
+          <i class="fa-solid fa-house"></i>
+          <span>หน้าแรก</span>
+        </div>
+        <div class="nav-item" onclick="switchCustomerTab('tickets', this)">
+          <i class="fa-solid fa-receipt"></i>
+          <span>ตั๋วจำนำ</span>
+        </div>
+        <div class="nav-item" onclick="switchCustomerTab('pay', this)">
+          <i class="fa-solid fa-circle-dollar-to-slot"></i>
+          <span>ส่งดอก</span>
+        </div>
+        <div class="nav-item" onclick="switchCustomerTab('help', this)">
+          <i class="fa-solid fa-circle-question"></i>
+          <span>ช่วยเหลือ</span>
+        </div>
+      </nav>
+    </div>
+
+    <!-- ==================== 4. ADMINISTRATOR PORTAL VIEW ==================== -->
+    <div id="admin-portal" class="admin-layout hidden">
+      
+      <!-- Admin Sidebar -->
+      <aside class="admin-sidebar">
+        <div class="admin-sidebar-header">
+          <img src="Logo.ico" alt="Logo">
+          <div>
+            <h2 id="admin-sidebar-shop-name" style="font-size: 16px; margin: 0; color: var(--primary-red); font-weight: 700;">EZY Pawnshop 2006</h2>
+            <p style="font-size: 11px; color: var(--accent-gold); margin-top: 4px; font-weight: 600;">ผู้ใช้ - <span id="admin-sidebar-user-name">Admin</span></p>
+          </div>
+        </div>
+        <nav class="admin-nav">
+          <div class="admin-nav-item active" onclick="switchAdminScreen('dash', this)">
+            <i class="fa-solid fa-chart-line"></i>
+            <span>Dashboard สรุปผล</span>
+          </div>
+          <div class="admin-nav-item" onclick="switchAdminScreen('reconcile', this)">
+            <i class="fa-solid fa-list-check"></i>
+            <span>จัดการชำระดอกเบี้ย</span>
+          </div>
+          <div class="admin-nav-item" onclick="switchAdminScreen('report', this)">
+            <i class="fa-solid fa-file-invoice-dollar"></i>
+            <span>รายงานส่งดอกเบี้ย</span>
+          </div>
+          <div class="admin-nav-item" onclick="switchAdminScreen('sync', this)">
+            <i class="fa-solid fa-cloud-arrow-up"></i>
+            <span>ส่งข้อมูลขึ้น Cloud</span>
+          </div>
+          <div class="admin-nav-item" onclick="switchAdminScreen('backup', this)">
+            <i class="fa-solid fa-database"></i>
+            <span>สำรองข้อมูลประจำวัน</span>
+          </div>
+          <div class="admin-nav-item" onclick="switchAdminScreen('users', this)">
+            <i class="fa-solid fa-users-gear"></i>
+            <span>จัดการผู้ใช้ระบบ</span>
+          </div>
+          <div class="admin-nav-item" onclick="switchAdminScreen('settings', this)">
+            <i class="fa-solid fa-sliders"></i>
+            <span>ตั้งค่าระบบ</span>
+          </div>
+          <div class="admin-nav-item" onclick="switchAdminScreen('help', this)">
+            <i class="fa-solid fa-circle-info"></i>
+            <span>คู่มือแอดมิน</span>
+          </div>
+        </nav>
+        <div class="admin-sidebar-footer">
+          <p><i class="fa-solid fa-circle-user"></i> แอดมิน: <span id="admin-user-display">-</span></p>
+          <button class="btn btn-outline" style="margin-top: 12px; padding: 6px 12px; font-size: 13px;" onclick="logout()">
+            <i class="fa-solid fa-arrow-right-from-bracket"></i> ออกจากระบบ
+          </button>
+        </div>
+      </aside>
+
+      <!-- Admin Viewport Content -->
+      <div class="admin-viewport">
+        
+        <!-- Header status bar -->
+        <div class="admin-top-bar">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <button type="button" class="sidebar-toggle-btn" onclick="toggleAdminSidebar()" title="เลื่อนเมนู เข้า/ออก">
+              <i class="fa-solid fa-bars"></i>
+            </button>
+            <h1 id="admin-view-title">Dashboard สรุปยอดสะสม</h1>
+          </div>
+          <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+            <div style="font-size: 14px; background-color: var(--bg-white); padding: 8px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-light); font-weight: 500; box-shadow: var(--shadow-sm);">
+              เวลาปัจจุบัน: <span id="admin-live-time" class="number">--:--:--</span>
+            </div>
+            <div id="admin-sys-version-indicator" class="number" style="font-size: 13px; font-weight: 600; color: var(--text-dark); margin-right: 4px; display: none;">
+              Version. 1
+            </div>
+          </div>
+        </div>
+
+        <!-- SCREEN 1: Dashboard -->
+        <div id="scr-dash" class="admin-screen active fade-in-el">
+          <div class="dashboard-grid">
+            <div class="widget-card">
+              <h3>ยอดชำระออนไลน์วันนี้</h3>
+              <p class="value"><span id="dash-today-total" class="number">0.00</span> <span style="font-size: 14px; font-weight: 500;">บาท</span></p>
+              <div style="font-size: 13px; color: var(--text-medium); margin-top: 4px; margin-bottom: 8px; font-weight: 600;">
+                จำนวนรายการ: <span id="dash-today-count" class="number" style="color: var(--primary-red); font-size: 15px;">0</span> รายการ
+              </div>
+              <p class="trend trend-up"><i class="fa-solid fa-calendar-day"></i> ประจำวันนี้</p>
+            </div>
+            <div class="widget-card">
+              <h3>ยอดชำระออนไลน์เดือนนี้</h3>
+              <p class="value"><span id="dash-month-total" class="number">0.00</span> <span style="font-size: 14px; font-weight: 500;">บาท</span></p>
+              <div style="font-size: 13px; color: var(--text-medium); margin-top: 4px; margin-bottom: 8px; font-weight: 600;">
+                จำนวนรายการ: <span id="dash-month-count" class="number" style="color: var(--primary-red); font-size: 15px;">0</span> รายการ
+              </div>
+              <p class="trend trend-up"><i class="fa-solid fa-calendar-days"></i> พ.ศ. 2569</p>
+            </div>
+            <div class="widget-card">
+              <h3>ยอดชำระออนไลน์ปีสะสม</h3>
+              <p class="value"><span id="dash-year-total" class="number">0.00</span> <span style="font-size: 14px; font-weight: 500;">บาท</span></p>
+              <div style="font-size: 13px; color: var(--text-medium); margin-top: 4px; margin-bottom: 8px; font-weight: 600;">
+                จำนวนรายการ: <span id="dash-year-count" class="number" style="color: var(--primary-red); font-size: 15px;">0</span> รายการ
+              </div>
+              <p class="trend trend-up"><i class="fa-solid fa-earth-asia"></i> ปีทำการ 2569</p>
+            </div>
+          </div>
+          
+          <div class="chart-card">
+            <h3 style="font-size: 16px; margin-bottom: 16px;"><i class="fa-solid fa-chart-area"></i> กราฟยอดชำระดอกเบี้ยออนไลน์สะสมรายเดือนปี 2569</h3>
+            <div class="chart-container">
+              <canvas id="dashboardChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- SCREEN 2: จัดการชำระดอกเบี้ย (Reconcile) -->
+        <div id="scr-reconcile" class="admin-screen hidden fade-in-el">
+          
+          <!-- Filter conditions (4 distinct columns: Date filter, Search keyword, SystemID, Reset button) -->
+          <div class="filter-bar" style="display: grid; grid-template-columns: 1.2fr 1.5fr 1fr auto; align-items: end; gap: 16px;">
+             <div class="form-group" style="margin-bottom: 0;">
+               <label for="filter-date"><i class="fa-regular fa-calendar"></i> 1. เงื่อนไขวันที่ชำระ (dd/mm/yyyy)</label>
+               <input type="text" id="filter-date" class="input-field" placeholder="dd/mm/yyyy" onclick="triggerHiddenDatePicker('filter-date-hidden')" readonly style="cursor: pointer; background-color: #ffffff;">
+               <input type="date" id="filter-date-hidden" style="position: absolute; opacity: 0; width: 0; height: 0; border: none; pointer-events: none;" onchange="handleHiddenDateChange(this, 'filter-date', applyReconcileFilters)">
+             </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="filter-search"><i class="fa-solid fa-magnifying-glass"></i> 2. บัตรประชาชน/ชื่อลูกค้า/เบอร์โทร</label>
+              <input type="text" id="filter-search" class="input-field" placeholder="ระบุคีย์เวิร์ดสำหรับค้นหา..." oninput="applyReconcileFilters()">
+            </div>
+            <div id="filter-system-id-container" class="form-group" style="margin-bottom: 0; display: none !important;">
+              <label for="filter-system-id"><i class="fa-solid fa-server"></i> 3. รหัสระบบ (SystemID)</label>
+              <select id="filter-system-id" class="input-field" onchange="applyReconcileFilters()" style="height: 50px; background-color: #ffffff;">
+                <option value="all" selected>แสดงทั้งหมด (ทั้ง 2 ระบบ)</option>
+                <option value="1">ทองคำ/เพชร (SystemID = 1)</option>
+                <option value="2">เบ็ดเตล็ด/มือถือ/อื่นๆ (SystemID = 2)</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom: 0; justify-content: flex-end;">
+              <label>&nbsp;</label>
+              <button type="button" class="btn btn-secondary" onclick="clearReconcileFilters()" style="width: 100%; height: 50px;">
+                <i class="fa-solid fa-arrows-rotate"></i> 4. ล้างการกรอง
+              </button>
+            </div>
+          </div>
+
+          <div class="flex-row-between" style="margin-bottom: 16px;">
+            <p style="font-size: 14px; color: var(--text-medium);">
+              * หลังจากเวลา <strong style="color: var(--primary-red);">16.00 น.</strong> พนักงานปิดงบรายวัน ตรวจสอบสลิปเทียบกับ Book Bank และกดเปลี่ยนสถานะเป็น อนุมัติแล้ว
+            </p>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-primary" style="width: auto; padding: 10px 16px; font-size: 14px; background: var(--success-green); box-shadow: none;" onclick="batchApprovePayments(true)">
+                <i class="fa-solid fa-check"></i> อนุมัติรายการที่เลือกทั้งหมด
+              </button>
+            </div>
+          </div>
+
+          <div class="admin-table-container">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th style="width: 40px; text-align: center;">
+                    <label class="checkbox-container">
+                      <input type="checkbox" id="reconcile-select-all" onclick="toggleSelectAllReconcile(this)">
+                      <span class="checkmark"></span>
+                    </label>
+                  </th>
+                  <th>รหัสชำระ (BillNo)</th>
+                  <th>เลขบัตรประชาชน</th>
+                  <th>วันที่ชำระเงิน</th>
+                  <th>ตั๋วจำนำ</th>
+                  <th>สลิปโอนเงิน</th>
+                  <th>จำนวนดอกเบี้ย</th>
+                  <th>สถานะ</th>
+                  <th style="text-align: center;">ดูรายละเอียด</th>
+                </tr>
+              </thead>
+              <tbody id="reconcile-table-body">
+                <!-- Reconcile Table rows will be populated dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- SCREEN 3: รายงานส่งดอกออนไลน์ (Report) -->
+        <div id="scr-report" class="admin-screen hidden fade-in-el">
+          <div class="card">
+            <div class="flex-row-between no-print" style="margin-bottom: 20px; border-bottom: 1px solid var(--border-light); padding-bottom: 12px;">
+              <h3><i class="fa-solid fa-print"></i> รายงานส่งดอกเบี้ยออนไลน์ผ่านเว็บแอปฯ</h3>
+              <button class="btn btn-outline" style="width: auto; padding: 6px 12px; font-size: 13px;" onclick="window.print()">
+                <i class="fa-solid fa-file-pdf"></i> พิมพ์ / Export PDF
+              </button>
+            </div>
+            
+            <!-- Print-Only Report Header (Visually hidden on screen, printed nicely on paper) -->
+            <div class="print-only-report-header">
+              <div style="text-align: left; font-size: 11px; font-weight: 500; margin-bottom: 12px; color: #444;">
+                วันที่พิมพ์: <span id="print-timestamp-val-header"></span>
+              </div>
+              <h2 id="print-shop-name-sub" style="font-size: 22px; font-weight: 800; margin-bottom: 6px;">โรงรับจำนำ อีซี่ Pawnshop 2006</h2>
+              <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 6px; color: #333333;">รายงานส่งดอกเบี้ยออนไลน์</h3>
+              <h4 id="print-date-range-sub" style="font-size: 13px; font-weight: 500; color: #555555;">รายการธุรกรรมทั้งหมด</h4>
+            </div>
+
+            <!-- Date Filter for Reports -->
+            <div class="filter-bar" style="margin-bottom: 24px; padding: 16px; display: grid; grid-template-columns: 1.2fr 1.2fr 1fr auto; align-items: end; gap: 16px;">
+              <div class="form-group" style="margin-bottom: 0;">
+                <label for="report-filter-start-date" style="font-size: 13px;"><i class="fa-regular fa-calendar"></i> เงื่อนไขแสดงผลจาก วันที่ชำระ (dd/mm/yyyy)</label>
+                <input type="text" id="report-filter-start-date" class="input-field" placeholder="dd/mm/yyyy" onclick="triggerHiddenDatePicker('report-filter-start-date-hidden')" readonly style="cursor: pointer; background-color: #ffffff;">
+                <input type="date" id="report-filter-start-date-hidden" style="position: absolute; opacity: 0; width: 0; height: 0; border: none; pointer-events: none;" onchange="handleHiddenDateChange(this, 'report-filter-start-date', renderAdminReport)">
+              </div>
+              <div class="form-group" style="margin-bottom: 0;">
+                <label for="report-filter-end-date" style="font-size: 13px;"><i class="fa-regular fa-calendar"></i> ถึงวันที่ (dd/mm/yyyy)</label>
+                <input type="text" id="report-filter-end-date" class="input-field" placeholder="dd/mm/yyyy" onclick="triggerHiddenDatePicker('report-filter-end-date-hidden')" readonly style="cursor: pointer; background-color: #ffffff;">
+                <input type="date" id="report-filter-end-date-hidden" style="position: absolute; opacity: 0; width: 0; height: 0; border: none; pointer-events: none;" onchange="handleHiddenDateChange(this, 'report-filter-end-date', renderAdminReport)">
+              </div>
+              <div id="report-filter-system-id-container" class="form-group" style="margin-bottom: 0; display: none !important;">
+                <label for="report-filter-system-id" style="font-size: 13px;"><i class="fa-solid fa-server"></i> รหัสระบบ (SystemID)</label>
+                <select id="report-filter-system-id" class="input-field" onchange="renderAdminReport()" style="height: 50px; background-color: #ffffff;">
+                  <option value="all" selected>แสดงทั้งหมด (ทั้ง 2 ระบบ)</option>
+                  <option value="1">ทองคำ/เพชร (SystemID = 1)</option>
+                  <option value="2">เบ็ดเตล็ด/มือถือ/อื่นๆ (SystemID = 2)</option>
+                </select>
+              </div>
+              <button type="button" class="btn btn-secondary" onclick="clearReportFilter()" style="width: auto; padding: 12px 18px; height: 50px;">
+                <i class="fa-solid fa-arrows-rotate"></i> ล้างการกรอง
+              </button>
+            </div>
+            
+            <div class="admin-table-container">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>รหัสชำระ (BillNo)</th>
+                    <th>ชื่อผู้ชำระ</th>
+                    <th>วันที่/เวลา</th>
+                    <th>เล่มที่/เลขที่ตั๋ว</th>
+                    <th>ทรัพย์สินที่รับจำนำ</th>
+                    <th style="text-align: right;">จำนวนเงินจำนำ</th>
+                    <th style="text-align: right;">ดอกเบี้ยจ่าย</th>
+                    <th style="text-align: left;">สถานะ</th>
+                  </tr>
+                </thead>
+                <tbody id="report-table-body">
+                  <!-- Report data rows go here -->
+                </tbody>
+                <tfoot>
+                  <tr style="font-weight: bold; background-color: var(--bg-light); border-top: 2px solid var(--border-light);">
+                    <td colspan="6" style="text-align: right; padding: 12px; font-size: 13px;">รวมทั้งหมดตามเงื่อนไข (Grand Total): <span id="report-summary-count">0</span> รายการ &nbsp;|&nbsp; ยอดรวมดอกเบี้ยสุทธิ:</td>
+                    <td style="text-align: right; padding: 12px; color: var(--primary-red); font-size: 16px; font-weight: 800;" id="report-summary-total">0.00 บาท</td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            
+            <!-- SystemID indicator printed at bottom-left of first page -->
+            <div id="report-print-system-indicator" class="report-system-id-indicator" style="display: none;">2</div>
+
+          </div>
+        </div>
+
+        <!-- SCREEN 4: อัปเดตข้อมูลบน Cloud (Cloud Sync) -->
+        <div id="scr-sync" class="admin-screen hidden fade-in-el">
+          <div class="card">
+            <h3 style="font-size: 16px; margin-bottom: 8px;"><i class="fa-solid fa-cloud-arrow-up"></i> ส่งข้อมูลไปปรับปรุงบน Cloud Database</h3>
+            <p style="font-size: 13px; color: var(--text-medium); margin-bottom: 20px;">
+              ดึงข้อมูลลูกค้าและรายการตั๋วจำนำใหม่ที่มีสถานะจำนำอยู่ (<code style="color: var(--primary-red); font-weight: bold;">bill_stat = 'N'</code>) จาก MySQL โลคอลโฟลเดอร์ <code style="background-color: var(--bg-gray); padding: 2px 6px; border-radius: 4px;">S:\server\AppServ\MySQL\data\Pawnshop</code> นำมาเขียนทับบนฐานข้อมูลคลาวด์
+            </p>
+            
+            <div class="cloud-sync-info-box" style="background: rgba(179, 0, 6, 0.03); border: 1px solid var(--border-light); padding: 20px; border-radius: var(--radius-md); margin-bottom: 24px; border-left: 5px solid var(--primary-red);">
+              <h4 style="font-size: 14px; font-weight: 700; color: var(--primary-red); margin-bottom: 10px;">
+                <i class="fa-solid fa-folder-open"></i> ตรวจจับพาธไฟล์ฐานข้อมูลอัตโนมัติ (Direct Auto-Fetch):
+              </h4>
+              <ul style="list-style-type: none; margin: 0; padding: 0; font-size: 13px; color: var(--text-dark); display: grid; gap: 8px;">
+                <li style="display: flex; align-items: center; gap: 8px;">
+                  <i class="fa-solid fa-file-invoice" style="color: var(--accent-gold);"></i>
+                  <strong>แฟ้มลูกค้า (Customer):</strong> <code style="font-family: monospace; background-color: var(--bg-white); padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border-light); font-size: 12px;">S:\AppServ\MySQL\data\PawnShop\customer</code>
+                </li>
+                <li style="display: flex; align-items: center; gap: 8px;">
+                  <i class="fa-solid fa-ticket" style="color: var(--accent-gold);"></i>
+                  <strong>ตั๋วรับจำนำ (Ticket):</strong> <code style="font-family: monospace; background-color: var(--bg-white); padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border-light); font-size: 12px;">S:\AppServ\MySQL\data\PawnShop\ticket</code>
+                </li>
+              </ul>
+              <div style="font-size: 12px; color: var(--text-medium); margin-top: 14px; font-style: italic; line-height: 1.5;">
+                * ระบบได้รับสิทธิ์อนุญาตเข้าถึงดิสก์โดยตรง ท่านสามารถกดปุ่ม "อัปโหลด" ด้านล่างเพื่อเริ่มการอ่านไฟล์ฐานข้อมูลและส่งขึ้นคลาวด์ได้ทันที โดยไม่ต้องลากหรือเลือกไฟล์ด้วยตนเอง
+              </div>
+            </div>
+            
+            <div style="margin-top: 24px; display: flex; justify-content: flex-end;">
+              <button class="btn btn-primary" style="width: auto; padding: 14px 40px;" onclick="runCloudSyncSimulation()">
+                <i class="fa-solid fa-cloud-bolt"></i> เริ่มอัปเดตข้อมูลขึ้น Cloud (Overwrites Cloud)
+              </button>
+            </div>
+            
+            <div class="sync-status-list" style="margin-top: 30px;">
+              <h4 style="font-size: 14px; margin-bottom: 12px; color: var(--text-medium);"><i class="fa-solid fa-history"></i> ประวัติการอัปเดตข้อมูลขึ้นระบบคลาวด์</h4>
+              <div id="sync-history-log">
+                <!-- Dynamic logs -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SCREEN 5: สำรองข้อมูลประจำวัน (Backup) -->
+        <div id="scr-backup" class="admin-screen hidden fade-in-el">
+          <div class="card">
+            <h3 style="font-size: 16px; margin-bottom: 8px;"><i class="fa-solid fa-file-zipper"></i> สำรองข้อมูลประจำวันขึ้น Cloud</h3>
+            <p style="font-size: 13px; color: var(--text-medium); margin-bottom: 16px;">
+              อัปโหลดไฟล์สำรองข้อมูล zip ที่เกิดจากการสำรองบนแอปพลิเคชันหลักของเครื่องโลคอล ในพาธ <code style="background-color: var(--bg-gray); padding: 2px 6px; border-radius: 4px; font-weight: bold; color: var(--primary-red);">S:\Backup\pawnshop_yyyy-mm-dd.zip</code> เพื่อเก็บความปลอดภัยภายนอกสถานที่
+            </p>
+            
+            <div class="drag-drop-area" id="drop-zone-backup" onclick="openBackupFilePicker()" style="max-width: 600px; margin: 0 auto 24px auto; padding: 6px 20px; height: 170px; cursor: pointer;">
+              <i class="fa-solid fa-file-zipper" style="font-size: 32px; margin-bottom: 6px;"></i>
+              <h3>เลือกไฟล์สำรองข้อมูล (.zip)</h3>
+              <p style="font-size: 13px; color: var(--text-medium);">แตะหรือลากไฟล์เพื่อเปิด <code style="font-weight:bold; color: var(--primary-red);">S:\Backup</code> แล้วเลือกไฟล์ .zip</p>
+              <span id="backup-file-name" style="margin-top: 8px; font-weight: 600; color: var(--primary-red); font-size: 13px;"></span>
+            </div>
+            <input type="file" id="backup-zip-file" class="file-input" accept=".zip" onchange="handleBackupFileSelect(this)">
+            
+            <div style="display: flex; justify-content: center;">
+              <button id="btn-backup-upload" class="btn btn-gold" style="width: auto; padding: 14px 40px; opacity: 0.4; cursor: not-allowed;" disabled onclick="runCloudBackupSimulation()">
+                <i class="fa-solid fa-upload"></i> อัปโหลดไฟล์สำรองไปยัง Cloudflare R2
+              </button>
+            </div>
+            
+            <div class="sync-status-list" style="margin-top: 30px;">
+              <h4 style="font-size: 14px; margin-bottom: 12px; color: var(--text-medium);"><i class="fa-solid fa-history"></i> ประวัติการอัปโหลดไฟล์สำรองข้อมูล</h4>
+              <div id="backup-history-log">
+                <!-- Dynamic logs -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SCREEN 6: จัดการข้อมูลผู้ใช้ (Manage Users) -->
+        <div id="scr-users" class="admin-screen hidden fade-in-el">
+          <div class="card">
+            <div class="flex-row-between" style="margin-bottom: 16px; border-bottom: 1px solid var(--border-light); padding-bottom: 12px;">
+              <h3 style="font-size: 16px; margin-bottom: 0;"><i class="fa-solid fa-user-shield"></i> แฟ้มข้อมูลผู้ดูแลระบบและแอดมิน</h3>
+              <button type="button" class="btn btn-primary" style="width: auto; padding: 8px 16px; font-size: 13px;" onclick="openAddUserModal()">
+                <i class="fa-solid fa-user-plus"></i> เพิ่มผู้ใช้ใหม่
+              </button>
+            </div>
+            
+            <div class="admin-table-container">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>รหัสพนักงาน (UserID)</th>
+                    <th>ชื่อ - นามสกุล</th>
+                    <th>ตำแหน่ง</th>
+                    <th>สถานะบัญชี</th>
+                    <th style="text-align: center; width: 120px;">จัดการ</th>
+                  </tr>
+                </thead>
+                <tbody id="users-table-body">
+                  <!-- User accounts go here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- SCREEN 7: คู่มือพนักงาน (Admin Help Manual) -->
+        <div id="scr-help" class="admin-screen hidden fade-in-el">
+          <div class="card">
+            <h3 style="font-size: 16px; margin-bottom: 16px;"><i class="fa-solid fa-circle-question"></i> คู่มือการดูแลระบบสำหรับพนักงาน</h3>
+            
+            <div class="help-section">
+              <h3>1. การสลับและตรวจสอบข้อมูลชำระดอกเบี้ย</h3>
+              <p style="font-size: 14px; color: var(--text-medium);">
+                ไปที่เมนู **"จัดการชำระดอกเบี้ย"** ท่านสามารถระบุวันที่ต้องการปิดงบรายวัน (ตัวเลือกหลัก) หรือค้นหาจากเลขประจำตัวประชาชนลูกค้า / ชื่อเพื่อตรวจสอบสลิป เมื่อมีลูกค้าส่งหลักฐานเข้ามารายการจะแสดงเป็นสถานะ "รออนุมัติ" พร้อมรายละเอียดจำนวนดอกเบี้ยและตัวเลขบนตั๋ว
+              </p>
+            </div>
+            
+            <div class="help-section">
+              <h3>2. การกระทบยอดเงินฝากและการอนุมัติ</h3>
+              <p style="font-size: 14px; color: var(--text-medium);">
+                หลังเวลากระทำการปิดร้าน **16:00 น.** ให้พนักงานนำตัวเลขที่ทำรายการในหน้าเว็บแอปฯ กระทบยอดเปรียบเทียบกับรายการเดินบัญชีธนาคารจริง (Book Bank) เมื่อยอดและหลักฐานถูกต้อง ให้ติ๊กเลือกหน้าตั๋วใบนั้นแล้วกดปุ่ม **"อนุมัติแล้ว"** เพื่อส่งตั๋วใหม่เข้าระบบตั๋วลูกค้าทันที
+              </p>
+            </div>
+            
+            <div class="help-section">
+              <h3>3. การจัดการแฟ้มข้อมูล Sync & Backup ขึ้น Cloud</h3>
+              <p style="font-size: 14px; color: var(--text-medium);">
+                * **เมนูส่งข้อมูลขึ้น Cloud**: ทำเพื่อล้างข้อมูลและเขียนทับตัวแปรล่าสุดของตั๋วที่มีสถานะ "N" ขึ้นฐานข้อมูลออนไลน์<br>
+                * **เมนูสำรองข้อมูลประจำวัน**: อัปโหลดไฟล์ zip ประจำวันที่ได้จากการสำรองข้อมูลโปรแกรมหลัก local ไปจัดเก็บความปลอดภัยบนพื้นที่ Cloudflare
+              </p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- SCREEN 8: ตั้งค่าระบบ (System Settings) -->
+        <div id="scr-settings" class="admin-screen hidden fade-in-el">
+          
+          <!-- Column Grid -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            
+            <!-- Left panel: System Settings -->
+            <div class="card">
+              <h3 style="font-size: 16px; margin-bottom: 20px; color: var(--primary-red); border-bottom: 1px solid var(--border-light); padding-bottom: 10px;">
+                <i class="fa-solid fa-gear"></i> 1. ตั้งค่าระบบ
+              </h3>
+              <form id="bank-settings-form" onsubmit="event.preventDefault(); saveBankSettings();">
+                <div class="form-group">
+                  <label for="cfg-edit-shop-name">ชื่อร้าน</label>
+                  <input type="text" id="cfg-edit-shop-name" class="input-field" placeholder="ตัวอย่าง: EZY Pawnshop 2006..." required autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label for="cfg-edit-bank-logo">เส้นทางรูปภาพโลโก้ธนาคาร (Logo Path / logobank.jpg)</label>
+                  <input type="text" id="cfg-edit-bank-logo" class="input-field" placeholder="ตัวอย่าง: logobank.jpg หรือ ไอคอนธนาคาร..." required autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label for="cfg-edit-bank-name">ชื่อธนาคาร</label>
+                  <input type="text" id="cfg-edit-bank-name" class="input-field" placeholder="ตัวอย่าง: ธนาคารกสิกรไทย..." required autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label for="cfg-edit-bank-color">รหัสสีสัญลักษณ์ธนาคาร (Hex Code)</label>
+                  <div style="display: flex; gap: 8px;">
+                    <input type="color" id="cfg-edit-bank-color-picker" style="width: 50px; height: 50px; padding: 0; border: 1px solid var(--border-light); border-radius: 6px; cursor: pointer;" onchange="document.getElementById('cfg-edit-bank-color').value = this.value">
+                    <input type="text" id="cfg-edit-bank-color" class="input-field" placeholder="ตัวอย่าง: #178e3d..." required autocomplete="off" oninput="document.getElementById('cfg-edit-bank-color-picker').value = this.value">
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="cfg-edit-bank-acc">เลขที่บัญชี</label>
+                  <input type="text" id="cfg-edit-bank-acc" class="input-field" placeholder="ตัวอย่าง: 012-3-45678-9..." required autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label for="cfg-edit-bank-acc-name">ชื่อบัญชี</label>
+                  <input type="text" id="cfg-edit-bank-acc-name" class="input-field" placeholder="ตัวอย่าง: บจก. อีซี่ พอนช็อป 2006..." required autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label for="cfg-edit-system-id">รหัสระบบ (SystemID)</label>
+                  <select id="cfg-edit-system-id" class="input-field" required>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                  </select>
+                </div>
+                <button type="submit" class="btn btn-primary" style="margin-top: 10px;">
+                  <i class="fa-solid fa-floppy-disk"></i> บันทึกข้อมูลตั้งค่าระบบ
+                </button>
+              </form>
+            </div>
+            
+            <!-- Right panel: Positions CRUD -->
+            <div class="card">
+              <div class="flex-row-between" style="margin-bottom: 20px; border-bottom: 1px solid var(--border-light); padding-bottom: 10px;">
+                <h3 style="font-size: 16px; margin-bottom: 0; color: var(--primary-red);">
+                  <i class="fa-solid fa-id-card-clip"></i> 2. จัดการข้อมูลตำแหน่งงาน
+                </h3>
+                <button type="button" class="btn btn-primary" style="width: auto; padding: 6px 12px; font-size: 12px;" onclick="openAddPositionModal()">
+                  <i class="fa-solid fa-plus"></i> เพิ่มตำแหน่ง
+                </button>
+              </div>
+              
+              <div class="admin-table-container">
+                <table class="admin-table">
+                  <thead>
+                    <tr>
+                      <th>ชื่อตำแหน่งงาน</th>
+                      <th style="text-align: center; width: 120px;">จัดการ</th>
+                    </tr>
+                  </thead>
+                  <tbody id="positions-table-body">
+                    <!-- Positions will be loaded dynamically -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          </div>
+        </div>
+        
+      </div>
+    </div>
+
+    <!-- ==================== 5. IMAGE VIEWER MODAL (POPUP) ==================== -->
+    <div id="image-viewer-modal" class="image-viewer-modal hidden" onclick="closeImageViewer()">
+      <span class="image-viewer-close" onclick="closeImageViewer()"><i class="fa-solid fa-xmark"></i></span>
+      <img id="image-viewer-img" class="image-viewer-content" src="" alt="Full size preview" onclick="event.stopPropagation()">
+      <div class="image-viewer-actions" onclick="event.stopPropagation()">
+        <!-- Actions inside zoom view if needed -->
+      </div>
+    </div>
+
+    <!-- ==================== 6. SLIP OPTIONS MODAL (GALLERY / CAMERA) ==================== -->
+    <div id="slip-options-modal" class="modal-overlay" onclick="closeSlipOptionsModal()">
+      <div class="modal-content" onclick="event.stopPropagation()" style="max-width: 320px;">
+        <h3 style="font-size: 16px; margin-bottom: 20px;"><i class="fa-solid fa-camera-rotate"></i> เลือกการส่งภาพสลิป</h3>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <button class="btn btn-secondary" onclick="triggerActualFileInput('camera')">
+            <i class="fa-solid fa-camera"></i> 1. ถ่ายรูปด้วยกล้องถ่ายภาพ
+          </button>
+          <button class="btn btn-secondary" onclick="triggerActualFileInput('gallery')">
+            <i class="fa-solid fa-images"></i> 2. เลือกจากคลังภาพ (Gallery)
+          </button>
+          <button class="btn btn-outline" style="border-color: var(--text-light); color: var(--text-medium);" onclick="closeSlipOptionsModal()">
+            ยกเลิก
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hidden native file input used dynamically -->
+    <input type="file" id="slip-file-input" class="hidden" accept="image/*">
+    <input type="file" id="slip-camera-input" class="hidden" accept="image/*" capture="environment">
+
+    <!-- ==================== 7. RECONCILE DETAIL MODAL (TWO COLUMN SLIP DRAWER) ==================== -->
+    <div id="reconcile-detail-modal" class="modal-overlay">
+      <div class="modal-content" style="max-width: 780px; text-align: left; display: flex; flex-direction: column;">
+        <div class="flex-row-between" style="border-bottom: 1px solid var(--border-light); padding-bottom: 12px; margin-bottom: 20px;">
+          <h3 style="font-size: 16px; color: var(--primary-red);"><i class="fa-solid fa-list-check"></i> ตรวจสอบการโอนเงินชำระดอกเบี้ย</h3>
+          <span style="cursor: pointer; font-size: 20px;" onclick="closeReconcileDetailModal()"><i class="fa-solid fa-xmark"></i></span>
+        </div>
+        
+        <div class="reconcile-modal-grid">
+          <!-- Left Column: Details -->
+          <div id="reconcile-detail-fields">
+            <!-- Populated dynamically -->
+          </div>
+          <!-- Right Column: Slip image display -->
+          <div>
+            <p style="font-size: 12px; color: var(--text-medium); margin-bottom: 8px;"><i class="fa-regular fa-image"></i> ภาพสลิปหลักฐานโอนเงิน:</p>
+            <div class="reconcile-slip-img-container">
+              <img id="reconcile-detail-slip-img" src="" alt="Slip Transfer" onclick="showImageViewer(this.src)" title="คลิกซูมขยายภาพ">
+            </div>
+          </div>
+        </div>
+        
+        <div id="reconcile-detail-actions" style="margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end;">
+          <!-- Approve / Reject / Close buttons -->
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 8. USER CRUD MODAL ==================== -->
+    <div id="user-crud-modal" class="modal-overlay">
+      <div class="modal-content" style="max-width: 400px; text-align: left; padding: 24px;">
+        <div class="flex-row-between" style="border-bottom: 1px solid var(--border-light); padding-bottom: 12px; margin-bottom: 16px;">
+          <h3 id="user-crud-title" style="font-size: 15px; color: var(--primary-red); font-weight: 700;">เพิ่มผู้ใช้งานใหม่</h3>
+          <span style="cursor: pointer; font-size: 16px;" onclick="closeUserCrudModal()"><i class="fa-solid fa-xmark"></i></span>
+        </div>
+        <form id="user-crud-form" onsubmit="event.preventDefault(); saveUserCrud();">
+          <input type="hidden" id="user-crud-mode" value="add">
+          <input type="hidden" id="user-crud-old-id">
+          
+          <div class="form-group">
+            <label for="user-crud-id">รหัสพนักงาน (UserID)</label>
+            <input type="text" id="user-crud-id" class="input-field" placeholder="ระบุตัวอักษร หรือ ตัวเลข..." required autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label for="user-crud-name">ชื่อ - นามสกุล</label>
+            <input type="text" id="user-crud-name" class="input-field" placeholder="ระบุชื่อจริง..." required autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label for="user-crud-pass">รหัสผ่าน (Password)</label>
+            <input type="password" id="user-crud-pass" class="input-field" placeholder="ระบุรหัสผ่านเข้าใช้งาน..." required>
+          </div>
+          <div class="form-group">
+            <label for="user-crud-pos">ตำแหน่ง (Position)</label>
+            <select id="user-crud-pos" class="input-field" style="padding: 10px 16px; height: 48px;">
+              <!-- Loaded dynamically from positions database -->
+            </select>
+          </div>
+          
+          <div style="display: flex; gap: 12px; margin-top: 24px; justify-content: flex-end;">
+            <button type="button" class="btn btn-secondary" style="width: auto; padding: 10px 20px;" onclick="closeUserCrudModal()">ยกเลิก</button>
+            <button type="submit" class="btn btn-primary" style="width: auto; padding: 10px 20px;">บันทึกข้อมูล</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ==================== 9. POSITION CRUD MODAL ==================== -->
+    <div id="position-crud-modal" class="modal-overlay">
+      <div class="modal-content" style="max-width: 360px; text-align: left; padding: 24px;">
+        <div class="flex-row-between" style="border-bottom: 1px solid var(--border-light); padding-bottom: 12px; margin-bottom: 16px;">
+          <h3 id="position-crud-title" style="font-size: 15px; color: var(--primary-red); font-weight: 700;">เพิ่มตำแหน่งงาน</h3>
+          <span style="cursor: pointer; font-size: 16px;" onclick="closePositionCrudModal()"><i class="fa-solid fa-xmark"></i></span>
+        </div>
+        <form id="position-crud-form" onsubmit="event.preventDefault(); savePositionCrud();">
+          <input type="hidden" id="position-crud-mode" value="add">
+          <input type="hidden" id="position-crud-old-name">
+          
+          <div class="form-group">
+            <label for="position-crud-name">ชื่อตำแหน่งงาน</label>
+            <input type="text" id="position-crud-name" class="input-field" placeholder="เช่น พนักงานตรวจสอบสลิป..." required autocomplete="off">
+          </div>
+          
+          <div style="display: flex; gap: 12px; margin-top: 24px; justify-content: flex-end;">
+            <button type="button" class="btn btn-secondary" style="width: auto; padding: 10px 20px;" onclick="closePositionCrudModal()">ยกเลิก</button>
+            <button type="submit" class="btn btn-primary" style="width: auto; padding: 10px 20px;">บันทึก</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- JavaScript Logics -->
+  <script src="app.js?v=42"></script>
+</body>
+</html>

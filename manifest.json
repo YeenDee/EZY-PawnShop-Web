@@ -1,0 +1,24 @@
+{
+  "short_name": "EZY Pawnshop",
+  "name": "EZY Pawnshop 2006",
+  "description": "ระบบจัดการส่งดอกเบี้ยและธุรกรรมออนไลน์สำหรับ EZY Pawnshop 2006",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "index.html",
+  "background_color": "#ffffff",
+  "theme_color": "#B30006",
+  "display": "standalone",
+  "orientation": "portrait"
+}
