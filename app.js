@@ -2617,10 +2617,10 @@ function setupDragAndDrop() {
 }
 
 // Sync data up to Cloud — ส่งข้อมูลแบบ chunk เพื่อหลีกเลี่ยง "Too many API requests"
-async function runCloudSyncSimulation() {
+async function runCloudSync() {
   const btn = document.querySelector('#scr-sync button.btn-primary');
-  const oldText = btn.innerHTML;
-  btn.disabled = true;
+  const oldText = btn ? btn.innerHTML : '';
+  if (btn) btn.disabled = true;
 
   // Helper: แบ่ง array เป็น chunks
   const chunkArray = (arr, size) => {
@@ -2644,7 +2644,7 @@ async function runCloudSyncSimulation() {
 
   try {
     // ดึงข้อมูลล่าสุดจาก KV (ที่ db_sync.py อัปโหลดไว้)
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังดึงข้อมูลจาก Cloud KV...';
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังดึงข้อมูลจาก Cloud KV...';
     let customers = db.customers || [];
     let tickets   = db.tickets   || [];
     let payments  = db.payments  || [];
@@ -2657,6 +2657,10 @@ async function runCloudSyncSimulation() {
           tickets   = normalizeKeys(kvData.tickets);
           customers = normalizeKeys(kvData.customers || []);
           payments  = normalizeKeys(kvData.payments  || []);
+          // ตัดช่องว่างท้ายชื่อลูกค้าออกอย่างสมบูรณ์
+          customers.forEach(c => {
+            if (c.Name) c.Name = String(c.Name).replace(/\s+/g, ' ').trim();
+          });
           // บันทึกลง local db ด้วย
           db.tickets   = tickets;
           db.customers = customers;
@@ -2668,8 +2672,8 @@ async function runCloudSyncSimulation() {
       }
     } catch(e) { /* ใช้ข้อมูลใน local db แทน */ }
 
-    // ส่งข้อมูลขึ้น D1 แบบ chunk (500 records ต่อครั้ง)
-    const CHUNK_SIZE = 500;
+    // ส่งข้อมูลขึ้น D1 แบบ chunk (200 records ต่อครั้ง เพื่อความเร็วและไม่เกิน Worker subrequest limit)
+    const CHUNK_SIZE = 200;
     const custChunks = chunkArray(customers, CHUNK_SIZE);
     const tickChunks = chunkArray(tickets, CHUNK_SIZE);
     const totalChunks = custChunks.length + tickChunks.length;
@@ -2677,19 +2681,19 @@ async function runCloudSyncSimulation() {
 
     // --- Upload Customers ---
     for (let i = 0; i < custChunks.length; i++) {
-      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ลูกค้า ${Math.min((i+1)*CHUNK_SIZE, customers.length)}/${customers.length} (chunk ${++doneChunks}/${totalChunks})`;
+      if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ลูกค้า ${Math.min((i+1)*CHUNK_SIZE, customers.length)}/${customers.length} (chunk ${++doneChunks}/${totalChunks})`;
       await postChunk({ customers: custChunks[i], tickets: [], payments: [], sync_time: new Date().toISOString() });
     }
 
     // --- Upload Tickets ---
     for (let i = 0; i < tickChunks.length; i++) {
-      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ตั๋ว ${Math.min((i+1)*CHUNK_SIZE, tickets.length)}/${tickets.length} (chunk ${++doneChunks}/${totalChunks})`;
+      if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ตั๋ว ${Math.min((i+1)*CHUNK_SIZE, tickets.length)}/${tickets.length} (chunk ${++doneChunks}/${totalChunks})`;
       await postChunk({ customers: [], tickets: tickChunks[i], payments: [], sync_time: new Date().toISOString() });
     }
 
     // --- Upload Payments (ถ้ามี) ---
     if (payments.length > 0) {
-      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> กำลังส่งการชำระ ${payments.length} รายการ...`;
+      if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> กำลังส่งการชำระ ${payments.length} รายการ...`;
       for (const chunk of chunkArray(payments, CHUNK_SIZE)) {
         await postChunk({ customers: [], tickets: [], payments: chunk, sync_time: new Date().toISOString() });
       }
@@ -2710,15 +2714,22 @@ async function runCloudSyncSimulation() {
       `  • ตั๋วจำนำ  : ${tickets.length.toLocaleString()} รายการ\n` +
       `  • ลูกค้า   : ${customers.length.toLocaleString()} รายการ\n` +
       `  • การชำระ  : ${payments.length.toLocaleString()} รายการ\n\n` +
-      `ข้อมูลถูกบันทึกเข้า Cloudflare D1 + KV แล้ว`);
+      `ข้อมูลถูกบันทึกเข้า Cloudflare D1 + KV เรียบร้อยแล้ว`);
 
   } catch (error) {
     console.error(error);
     alert('เกิดข้อผิดพลาดในการซิงค์ข้อมูล: ' + error.message);
   } finally {
-    btn.disabled = false;
-    btn.innerHTML = oldText;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = oldText;
+    }
   }
+}
+
+// Alias for backward compatibility
+async function runCloudSyncSimulation() {
+  return await runCloudSync();
 }
 
 
@@ -2757,8 +2768,8 @@ function renderSyncHistory() {
   });
 }
 
-// Backup file simulation
-function runCloudBackupSimulation() {
+// Real Backup file upload function to Cloudflare R2
+async function runCloudBackup() {
   // Guard: ต้องเลือกไฟล์ก่อน
   if (!state.uploadedBackupFile) {
     alert('กรุณาแตะกรอบเพื่อเลือกไฟล์ .zip จากไดรฟ์ S:\\Backup ก่อน');
@@ -2770,40 +2781,64 @@ function runCloudBackupSimulation() {
   if (btn) {
     btn.disabled = true;
     btn.style.opacity = '0.6';
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลด ZIP สำรองไปยัง Cloudflare...';
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลด ZIP สำรองไปยัง Cloudflare R2...';
   }
   
-  const fileName = state.uploadedBackupFile.name;
+  const file = state.uploadedBackupFile;
+  const fileName = file.name;
   
-  setTimeout(() => {
-    const timestampStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-    
-    db.backup.unshift({
-      timestamp: timestampStr,
-      filename: fileName,
-      status: 'สำเร็จ (Cloudflare R2)'
+  try {
+    // ส่งไฟล์ zip จริงไปยัง R2 API endpoint (/api/backup/:filename)
+    const response = await fetch('/api/backup/' + encodeURIComponent(fileName), {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/zip'
+      },
+      body: file
     });
     
-    saveDBTable('backup');
-    renderBackupHistory();
+    let result = {};
+    try { result = await response.json(); } catch(e) {}
     
-    // Reset state
-    state.uploadedBackupFile = null;
-    const zipInput = document.getElementById('backup-zip-file');
-    if (zipInput) zipInput.value = '';
-    const fnDisplay = document.getElementById('backup-file-name');
-    if (fnDisplay) fnDisplay.innerText = '';
-    
-    // Reset button back to disabled (ต้องเลือกไฟล์ใหม่ก่อนอัปโหลดครั้งต่อไป)
+    if (response.ok && (result.success || result.success === undefined)) {
+      const timestampStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+      
+      db.backup.unshift({
+        timestamp: timestampStr,
+        filename: fileName,
+        status: 'จัดเก็บเรียบร้อย (Cloudflare R2)'
+      });
+      
+      saveDBTable('backup');
+      renderBackupHistory();
+      
+      // Reset state
+      state.uploadedBackupFile = null;
+      const zipInput = document.getElementById('backup-zip-file');
+      if (zipInput) zipInput.value = '';
+      const fnDisplay = document.getElementById('backup-file-name');
+      if (fnDisplay) fnDisplay.innerText = '';
+      
+      alert(`✅ สำรองข้อมูล zip ประจำวัน "${fileName}" ขึ้น Cloudflare R2 สำเร็จเรียบร้อย!`);
+    } else {
+      throw new Error(result.error || `HTTP Status ${response.status}`);
+    }
+  } catch (error) {
+    console.error(error);
+    alert('เกิดข้อผิดพลาดในการอัปโหลดไฟล์สำรอง: ' + error.message);
+  } finally {
     if (btn) {
       btn.disabled = true;
       btn.style.opacity = '0.4';
       btn.style.cursor = 'not-allowed';
       btn.innerHTML = oldText;
     }
-    
-    alert(`✅ สำรองข้อมูล zip ประจำวัน "${fileName}" ขึ้น Cloudflare R2 สำเร็จเรียบร้อย!`);
-  }, 1500);
+  }
+}
+
+// Alias for backward compatibility
+function runCloudBackupSimulation() {
+  runCloudBackup();
 }
 
 async function renderBackupHistory() {

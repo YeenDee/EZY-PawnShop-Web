@@ -601,7 +601,7 @@
             </div>
             
             <div style="margin-top: 24px; display: flex; justify-content: flex-end;">
-              <button class="btn btn-primary" style="width: auto; padding: 14px 40px;" onclick="runCloudSyncSimulation()">
+              <button class="btn btn-primary" style="width: auto; padding: 14px 40px;" onclick="runCloudSync()">
                 <i class="fa-solid fa-cloud-bolt"></i> เริ่มอัปเดตข้อมูลขึ้น Cloud (Overwrites Cloud)
               </button>
             </div>
@@ -632,7 +632,7 @@
             <input type="file" id="backup-zip-file" class="file-input" accept=".zip" onchange="handleBackupFileSelect(this)">
             
             <div style="display: flex; justify-content: center;">
-              <button id="btn-backup-upload" class="btn btn-gold" style="width: auto; padding: 14px 40px; opacity: 0.4; cursor: not-allowed;" disabled onclick="runCloudBackupSimulation()">
+              <button id="btn-backup-upload" class="btn btn-gold" style="width: auto; padding: 14px 40px; opacity: 0.4; cursor: not-allowed;" disabled onclick="runCloudBackup()">
                 <i class="fa-solid fa-upload"></i> อัปโหลดไฟล์สำรองไปยัง Cloudflare R2
               </button>
             </div>

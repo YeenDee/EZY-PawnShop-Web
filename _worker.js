@@ -35,74 +35,106 @@ export default {
             await env.PAWNSHOP_KV.put('db_sync_latest', bodyText);
           }
 
-          // Exec D1 SQL Database queries if env.DB is bound
-          if (env.DB) {
-            // Auto-create D1 SQL Tables - split statements (D1 exec handles one at a time)
-            await env.DB.exec(`CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT, tel TEXT, cust_code TEXT)`);
-            try { await env.DB.exec(`ALTER TABLE customers ADD COLUMN cust_code TEXT`); } catch(e){}
-            await env.DB.exec(`CREATE TABLE IF NOT EXISTS tickets (system_id TEXT, bud_year TEXT, book_no TEXT, doc_no TEXT, bill_stat TEXT, asstotal TEXT, month_total TEXT, month_int TEXT, totalint TEXT, app_date TEXT, exp_date TEXT, model TEXT, id TEXT, cust_code TEXT, PRIMARY KEY (system_id, bud_year, book_no, doc_no))`);
-            try { await env.DB.exec(`ALTER TABLE tickets ADD COLUMN cust_code TEXT`); } catch(e){}
-            await env.DB.exec(`CREATE TABLE IF NOT EXISTS payments (bill_no TEXT PRIMARY KEY, system_id TEXT, bud_year TEXT, book_no TEXT, doc_no TEXT, bill_type TEXT, bill_date TEXT, slip TEXT, id TEXT)`);
-            await env.DB.exec(`CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)`);
+        // ========== D1 SQL Database Upsert (Batch Mode) ==========
+        // ใช้ batch() แทน loop .run() ทีละแถว เพื่อหลีกเลี่ยง
+        // "Too many API requests by single Worker invocation"
+        if (env.DB) {
+          const CHUNK = 100; // จำนวน statement ต่อ 1 batch call
 
-            // Upsert Customers — mapping: id(card_no), cust_code, name, tel
-            if (Array.isArray(data.customers)) {
-              for (const c of data.customers) {
-                const cId = String(c.Id || c.id || c.card_no || '');
-                const cCode = String(c.CustCode || c.cust_code || c.custCode || cId);
-                const cName = String(c.Name || c.name || ((c.name||'') + ' ' + (c.surname||'')).trim() || '');
-                const cTel = String(c.Tel || c.tel || '');
-                if (!cId) continue;
-                await env.DB.prepare(
-                  `INSERT INTO customers (id, cust_code, name, tel) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET cust_code=excluded.cust_code, name=excluded.name, tel=excluded.tel`
-                ).bind(cId, cCode, cName, cTel).run();
-              }
+          // Helper: แบ่ง array เป็น chunks
+          const chunkArray = (arr, size) => {
+            const chunks = [];
+            for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
+            return chunks;
+          };
+
+          // Auto-create tables (ใช้ batch สร้างพร้อมกัน)
+          try {
+            await env.DB.batch([
+              env.DB.prepare(`CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT, tel TEXT, cust_code TEXT)`),
+              env.DB.prepare(`CREATE TABLE IF NOT EXISTS tickets (system_id TEXT, bud_year TEXT, book_no TEXT, doc_no TEXT, bill_stat TEXT, asstotal TEXT, month_total TEXT, month_int TEXT, totalint TEXT, app_date TEXT, exp_date TEXT, model TEXT, id TEXT, cust_code TEXT, PRIMARY KEY (system_id, bud_year, book_no, doc_no))`),
+              env.DB.prepare(`CREATE TABLE IF NOT EXISTS payments (bill_no TEXT PRIMARY KEY, system_id TEXT, bud_year TEXT, book_no TEXT, doc_no TEXT, bill_type TEXT, bill_date TEXT, slip TEXT, id TEXT)`),
+              env.DB.prepare(`CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)`),
+            ]);
+          } catch(e) { /* tables exist */ }
+          try { await env.DB.exec(`ALTER TABLE customers ADD COLUMN cust_code TEXT`); } catch(e){}
+          try { await env.DB.exec(`ALTER TABLE tickets ADD COLUMN cust_code TEXT`); } catch(e){}
+
+          // --- Upsert Customers (batch 100 ต่อครั้ง) ---
+          if (Array.isArray(data.customers) && data.customers.length > 0) {
+            const custStmts = [];
+            for (const c of data.customers) {
+              const cId   = String(c.Id || c.id || c.card_no || '');
+              const cCode = String(c.CustCode || c.cust_code || cId);
+              // ตัดช่องว่างซ้ำและช่องว่างหน้า-หลังออกอย่างหมดจด (.trim())
+              const rawName = String(c.Name || c.name || ((c.name||'') + ' ' + (c.surname||'')).trim() || '');
+              const cName = rawName.replace(/\s+/g, ' ').trim();
+              const cTel  = String(c.Tel  || c.tel  || '');
+              if (!cId) continue;
+              custStmts.push(
+                env.DB.prepare(`INSERT INTO customers (id,cust_code,name,tel) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET cust_code=excluded.cust_code,name=excluded.name,tel=excluded.tel`)
+                  .bind(cId, cCode, cName, cTel)
+              );
             }
-
-            // Upsert Tickets — mapping MySQL real fields to D1 columns
-            if (Array.isArray(data.tickets)) {
-              for (const t of data.tickets) {
-                const sysId   = String(t.SystemID  || t.system_id  || '');
-                const budYr   = String(t.BudYear   || t.bud_year   || '');
-                const bookNo  = String(t.BookNo    || t.book_no    || '');
-                const docNo   = String(t.DocNo     || t.doc_no     || '');
-                const billSt  = String(t.BillStat  || t.bill_stat  || 'N');
-                const assT    = String(t.Asstotal  || t.asstotal   || t.ass_total  || 0);
-                const monTot  = String(t.MonthTotal|| t.month_total|| t.month_tot  || 1);
-                const monInt  = String(t.MonthInt  || t.month_int  || 0);
-                const totInt  = String(t.Totalint  || t.totalint   || t.tot_int    || 0);
-                const appDt   = String(t.AppDate   || t.app_date   || '');
-                const expDt   = String(t.ExpDate   || t.exp_date   || t.bill_expired || '');
-                const model   = String(t.Model     || t.model      || '');
-                const custId  = String(t.Id        || t.id         || t.cust_code  || '');
-                const custCode= String(t.CustCode  || t.cust_code  || custId);
-                if (!sysId || !docNo) continue;
-                await env.DB.prepare(
-                  `INSERT INTO tickets (system_id, bud_year, book_no, doc_no, bill_stat, asstotal, month_total, month_int, totalint, app_date, exp_date, model, id, cust_code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(system_id, bud_year, book_no, doc_no) DO UPDATE SET bill_stat=excluded.bill_stat, asstotal=excluded.asstotal, month_total=excluded.month_total, month_int=excluded.month_int, totalint=excluded.totalint, app_date=excluded.app_date, exp_date=excluded.exp_date, model=excluded.model, id=excluded.id, cust_code=excluded.cust_code`
-                ).bind(sysId, budYr, bookNo, docNo, billSt, assT, monTot, monInt, totInt, appDt, expDt, model, custId, custCode).run();
-              }
-            }
-
-            // Upsert Payments
-            if (Array.isArray(data.payments)) {
-              for (const p of data.payments) {
-                const bno = String(p.BillNo || p.bill_no || '');
-                if (!bno) continue;
-                await env.DB.prepare(
-                  `INSERT INTO payments (bill_no, system_id, bud_year, book_no, doc_no, bill_type, bill_date, slip, id) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(bill_no) DO UPDATE SET bill_type=excluded.bill_type, slip=excluded.slip`
-                ).bind(bno, String(p.SystemID||p.system_id||''), String(p.BudYear||p.bud_year||''), String(p.BookNo||p.book_no||''), String(p.DocNo||p.doc_no||''), String(p.BillType||p.bill_type||''), String(p.BillDate||p.bill_date||''), String(p.Slip||p.slip||''), String(p.Id||p.id||'')).run();
-              }
-            }
-
-            // Upsert Config (bank name, color, logo, etc.)
-            if (data.config && typeof data.config === 'object') {
-              for (const [k, v] of Object.entries(data.config)) {
-                await env.DB.prepare(
-                  `INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
-                ).bind(String(k), String(v ?? '')).run();
-              }
+            for (const chunk of chunkArray(custStmts, CHUNK)) {
+              await env.DB.batch(chunk);
             }
           }
+
+          // --- Upsert Tickets (batch 100 ต่อครั้ง) ---
+          if (Array.isArray(data.tickets) && data.tickets.length > 0) {
+            const tickStmts = [];
+            for (const t of data.tickets) {
+              const sysId   = String(t.SystemID   || t.system_id   || '');
+              const budYr   = String(t.BudYear    || t.bud_year    || '');
+              const bookNo  = String(t.BookNo     || t.book_no     || '');
+              const docNo   = String(t.DocNo      || t.doc_no      || '');
+              const billSt  = String(t.BillStat   || t.bill_stat   || 'N');
+              const assT    = String(t.Asstotal   || t.asstotal    || 0);
+              const monTot  = String(t.MonthTotal || t.month_total || 1);
+              const monInt  = String(t.MonthInt   || t.month_int   || 0);
+              const totInt  = String(t.Totalint   || t.totalint    || 0);
+              const appDt   = String(t.AppDate    || t.app_date    || '');
+              const expDt   = String(t.ExpDate    || t.exp_date    || t.bill_expired || '');
+              const model   = String(t.Model      || t.model       || '');
+              const custId  = String(t.Id         || t.id          || t.cust_code || '');
+              const custCode= String(t.CustCode   || t.cust_code   || custId);
+              if (!sysId || !docNo) continue;
+              tickStmts.push(
+                env.DB.prepare(`INSERT INTO tickets (system_id,bud_year,book_no,doc_no,bill_stat,asstotal,month_total,month_int,totalint,app_date,exp_date,model,id,cust_code) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(system_id,bud_year,book_no,doc_no) DO UPDATE SET bill_stat=excluded.bill_stat,asstotal=excluded.asstotal,month_total=excluded.month_total,month_int=excluded.month_int,totalint=excluded.totalint,app_date=excluded.app_date,exp_date=excluded.exp_date,model=excluded.model,id=excluded.id,cust_code=excluded.cust_code`)
+                  .bind(sysId, budYr, bookNo, docNo, billSt, assT, monTot, monInt, totInt, appDt, expDt, model, custId, custCode)
+              );
+            }
+            for (const chunk of chunkArray(tickStmts, CHUNK)) {
+              await env.DB.batch(chunk);
+            }
+          }
+
+          // --- Upsert Payments (batch 100 ต่อครั้ง) ---
+          if (Array.isArray(data.payments) && data.payments.length > 0) {
+            const payStmts = [];
+            for (const p of data.payments) {
+              const bno = String(p.BillNo || p.bill_no || '');
+              if (!bno) continue;
+              payStmts.push(
+                env.DB.prepare(`INSERT INTO payments (bill_no,system_id,bud_year,book_no,doc_no,bill_type,bill_date,slip,id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(bill_no) DO UPDATE SET bill_type=excluded.bill_type,slip=excluded.slip`)
+                  .bind(bno, String(p.SystemID||p.system_id||''), String(p.BudYear||p.bud_year||''), String(p.BookNo||p.book_no||''), String(p.DocNo||p.doc_no||''), String(p.BillType||p.bill_type||''), String(p.BillDate||p.bill_date||''), String(p.Slip||p.slip||''), String(p.Id||p.id||''))
+              );
+            }
+            for (const chunk of chunkArray(payStmts, CHUNK)) {
+              await env.DB.batch(chunk);
+            }
+          }
+
+          // --- Upsert Config ---
+          if (data.config && typeof data.config === 'object') {
+            const cfgStmts = Object.entries(data.config).map(([k, v]) =>
+              env.DB.prepare(`INSERT INTO config (key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
+                .bind(String(k), String(v ?? ''))
+            );
+            if (cfgStmts.length > 0) await env.DB.batch(cfgStmts);
+          }
+        }
 
           return new Response(JSON.stringify({ success: true, message: 'บันทึกข้อมูลเข้า Cloudflare D1 SQL Database & KV สำเร็จ' }), {
             headers: { 'Content-Type': 'application/json', ...corsHeaders }

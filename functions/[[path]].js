@@ -65,7 +65,9 @@ export async function onRequest(context) {
             for (const c of data.customers) {
               const cId   = String(c.Id || c.id || c.card_no || '');
               const cCode = String(c.CustCode || c.cust_code || cId);
-              const cName = String(c.Name || c.name || '');
+              // ตัดช่องว่างซ้ำและช่องว่างหน้า-หลังออกอย่างหมดจด (.trim())
+              const rawName = String(c.Name || c.name || ((c.name||'') + ' ' + (c.surname||'')).trim() || '');
+              const cName = rawName.replace(/\s+/g, ' ').trim();
               const cTel  = String(c.Tel  || c.tel  || '');
               if (!cId) continue;
               custStmts.push(

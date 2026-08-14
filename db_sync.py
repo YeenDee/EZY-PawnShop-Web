@@ -47,9 +47,13 @@ def sanitize_rows(rows):
                 clean[k] = str(v)
             elif isinstance(v, bytes):
                 try:
-                    clean[k] = v.decode('utf-8')
+                    val_str = v.decode('utf-8')
                 except Exception:
-                    clean[k] = v.decode('tis620', errors='replace')
+                    val_str = v.decode('tis620', errors='replace')
+                clean[k] = ' '.join(val_str.split()).strip() if k == 'Name' else val_str
+            elif k == 'Name' and isinstance(v, str):
+                # ตัดช่องว่างซ้ำและช่องว่างท้ายชื่อออกอย่างสมบูรณ์ (.strip())
+                clean[k] = ' '.join(v.split()).strip()
             else:
                 clean[k] = v
         result.append(clean)
@@ -272,7 +276,7 @@ def run_db_sync(mock_mode=False):
                         surname_col = 'surname'   if 'surname'  in col_names else ('Surname' if 'Surname' in col_names else '')
                         tel_col     = 'tel'       if 'tel'      in col_names else ('Tel' if 'Tel' in col_names else 'tel')
 
-                        name_expr = f"CONCAT({name_col}, ' ', {surname_col})" if surname_col else name_col
+                        name_expr = f"TRIM(CONCAT(TRIM(IFNULL({name_col},'')), ' ', TRIM(IFNULL({surname_col},''))))" if surname_col else f"TRIM(IFNULL({name_col},''))"
                         print(f"    [INFO] Id={id_col}, name={name_expr}, tel={tel_col}, link={cust_fk_col}")
 
                         format_strings = ','.join(['%s'] * len(active_cust_codes))
@@ -326,18 +330,16 @@ def run_db_sync(mock_mode=False):
                 cursor.close()
                 conn.close()
             except Exception as e:
-                print(f"[!] เกิดข้อผิดพลาดขณะคิวรี่ฐานข้อมูล: {e}")
+                print(f"[!] เกิดข้อผิดพลาดขณะคิวรี่ฐานข้อมูล MySQL: {e}")
                 import traceback
                 traceback.print_exc()
-                print("[*] สลับเข้าสู่โหมดทดสอบ (Mock Mode)...")
-                mock_mode = True
+                if not mock_mode:
+                    print("[!] ยุติการทำงานเนื่องจากเชื่อมต่อฐานข้อมูลจริงไม่ได้ (ใช้ข้อมูลจริงจาก S:\\AppServ\\MySQL\\data\\PawnShop)")
+                    return
 
     if mock_mode:
-        print("[โหมดทดสอบ] กำลังจำลองการอ่านไฟล์ข้อมูลจากโฟลเดอร์:")
-        print(f"    Source: {LOCAL_DB_DIR}\\customer")
-        print(f"    Source: {LOCAL_DB_DIR}\\ticket")
-        
-        # Simulated Mock Data
+        print("[โหมดทดสอบ] กำลังจำลองการอ่านไฟล์ข้อมูลจำลอง (Mock Data):")
+        # Simulated Mock Data (เฉพาะเมื่อระบุ --mock)
         customers_data = [
             { "Id": "1-2345-67890-12-3", "Name": "สมชาย ใจดี", "Tel": "0812345678" },
             { "Id": "3-1002-34567-89-0", "Name": "สมศรี มีสุข", "Tel": "0898765432" }
