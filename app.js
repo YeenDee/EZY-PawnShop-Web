@@ -2643,14 +2643,15 @@ async function runCloudSync() {
   };
 
   try {
-    // ดึงข้อมูลล่าสุดจาก KV (ที่ db_sync.py อัปโหลดไว้)
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังดึงข้อมูลจาก Cloud KV...';
+    // ดึงข้อมูลล่าสุดจาก KV (ที่ db_sync.py อัปโหลดไว้จาก MySQL จริง)
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังดึงข้อมูลล่าสุดจาก Cloud KV...';
     let customers = db.customers || [];
     let tickets   = db.tickets   || [];
     let payments  = db.payments  || [];
 
     try {
-      const kvRes = await fetch('/api/sync?t=' + Date.now());
+      // ระบุ source=kv เพื่อดึงข้อมูลจริงที่ db_sync.py อัปโหลดขึ้น KV โดยตรง
+      const kvRes = await fetch('/api/sync?source=kv&t=' + Date.now());
       if (kvRes.ok) {
         const kvData = await kvRes.json();
         if (kvData && kvData.tickets && kvData.tickets.length > 0) {
@@ -2668,9 +2669,11 @@ async function runCloudSync() {
           saveDBTable('tickets');
           saveDBTable('customers');
           saveDBTable('payments');
+        } else {
+          alert('⚠️ ยังไม่พบข้อมูลตั๋วใน Cloud KV กรุณารันคำสั่ง "python db_sync.py sync" ที่เครื่องแม่เพื่อส่งข้อมูล MySQL ขึ้น Cloud ก่อนครับ');
         }
       }
-    } catch(e) { /* ใช้ข้อมูลใน local db แทน */ }
+    } catch(e) { console.error('Fetch KV error:', e); }
 
     // ส่งข้อมูลขึ้น D1 แบบ chunk (200 records ต่อครั้ง เพื่อความเร็วและไม่เกิน Worker subrequest limit)
     const CHUNK_SIZE = 200;

@@ -142,30 +142,45 @@ export async function onRequest(context) {
         return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500, headers: corsHeaders });
       }
     } else {
-      // GET /api/sync - Query D1 SQL Database then KV fallback
+      // GET /api/sync - Return fresh data from KV (uploaded by db_sync.py) or D1 SQL fallback
       try {
+        const reqSource = url.searchParams.get('source');
+
+        // 1. If source != 'd1', check Cloudflare KV (db_sync_latest) first for fresh MySQL data
+        if (reqSource !== 'd1' && env.PAWNSHOP_KV) {
+          const kvText = await env.PAWNSHOP_KV.get('db_sync_latest');
+          if (kvText) {
+            try {
+              const kvParsed = JSON.parse(kvText);
+              if (kvParsed && (Array.isArray(kvParsed.tickets) && kvParsed.tickets.length > 0 || Array.isArray(kvParsed.customers) && kvParsed.customers.length > 0)) {
+                return new Response(kvText, {
+                  headers: { 'Content-Type': 'application/json', ...corsHeaders }
+                });
+              }
+            } catch(pe) {}
+          }
+        }
+
+        // 2. Query D1 SQL Database if KV is empty or source=d1 requested
         if (env.DB) {
           const { results: customers } = await env.DB.prepare("SELECT id as Id, cust_code as CustCode, name as Name, tel as Tel FROM customers").all();
           const { results: tickets } = await env.DB.prepare("SELECT system_id as SystemID, bud_year as BudYear, book_no as BookNo, doc_no as DocNo, bill_stat as BillStat, asstotal as Asstotal, month_total as MonthTotal, month_int as MonthInt, totalint as Totalint, app_date as AppDate, exp_date as ExpDate, model as Model, id as Id, cust_code as CustCode FROM tickets").all();
           const { results: payments } = await env.DB.prepare("SELECT bill_no as BillNo, system_id as SystemID, bud_year as BudYear, book_no as BookNo, doc_no as DocNo, bill_type as BillType, bill_date as BillDate, slip as Slip, id as Id FROM payments").all();
-          // Load config
           let config = {};
           try {
             const { results: cfgRows } = await env.DB.prepare("SELECT key, value FROM config").all();
             if (cfgRows) cfgRows.forEach(r => { config[r.key] = r.value; });
           } catch(e2) {}
 
-          if (customers && customers.length > 0) {
-            return new Response(JSON.stringify({ customers, tickets, payments, config, source: 'Cloudflare D1 SQL' }), {
-              headers: { 'Content-Type': 'application/json', ...corsHeaders }
-            });
-          }
+          return new Response(JSON.stringify({ customers, tickets, payments, config, source: 'Cloudflare D1 SQL' }), {
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
         }
       } catch (e) {
         console.error('D1 query fallback:', e);
       }
 
-      // KV Fallback
+      // Final Fallback: try KV anyway if D1 failed
       let kvData = null;
       if (env.PAWNSHOP_KV) {
         kvData = await env.PAWNSHOP_KV.get('db_sync_latest');
