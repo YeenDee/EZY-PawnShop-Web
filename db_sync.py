@@ -454,7 +454,7 @@ def run_db_sync(mock_mode=False):
     
     if success:
         print(f"\n{'='*50}")
-        print(f"  ✅ ซิงค์ข้อมูลขึ้น Cloudflare สำเร็จ!")
+        print(f"  [OK] ซิงค์ข้อมูลขึ้น Cloudflare สำเร็จ!")
         print(f"  - ตั๋วจำนำ  : {len(tickets_data):,} รายการ")
         print(f"  - ลูกค้า   : {len(customers_data):,} รายการ")
         print(f"  - การชำระ  : {len(payments_data):,} รายการ")
@@ -463,7 +463,7 @@ def run_db_sync(mock_mode=False):
         print(f"{'='*50}\n")
     else:
         print(f"\n{'='*50}")
-        print(f"  ❌ ไม่สามารถส่งข้อมูลขึ้น Cloudflare ได้")
+        print(f"  [FAIL] ไม่สามารถส่งข้อมูลขึ้น Cloudflare ได้")
         print(f"  กรุณาตรวจสอบ:")
         print(f"  1. อินเทอร์เน็ตเชื่อมต่ออยู่ไหม")
         print(f"  2. สร้าง API Token ใหม่ที่ https://dash.cloudflare.com/profile/api-tokens")
