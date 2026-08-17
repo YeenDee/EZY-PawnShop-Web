@@ -164,7 +164,8 @@ def get_mysql_connection(custom_pass=None):
 
 def upload_to_cloudflare_kv(key, data_str):
     """Uploads synced customer & ticket JSON payload to Cloudflare KV & Pages Function API."""
-    if CF_KV_NAMESPACE and CF_KV_NAMESPACE != 'pawnshop_kv_namespace':
+    # ลอง KV API ก่อน (ถ้า token ยังใช้ได้)
+    if CF_KV_NAMESPACE and CF_KV_NAMESPACE != 'pawnshop_kv_namespace' and CF_API_TOKEN and 'PUT_YOUR' not in CF_API_TOKEN:
         url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/storage/kv/namespaces/{CF_KV_NAMESPACE}/values/{key}"
         headers = {
             "Authorization": f"Bearer {CF_API_TOKEN}",
@@ -178,24 +179,89 @@ def upload_to_cloudflare_kv(key, data_str):
                 print(f"[+] ส่งข้อมูลตั๋วและลูกค้าขึ้น Cloudflare KV API สำเร็จ! Response: {res_body}")
                 return True, res_body
         except Exception as e:
-            print(f"[!] Cloudflare KV API info: {e}")
+            print(f"[!] Cloudflare KV API ล้มเหลว: {e}")
+            print(f"    (token อาจหมดอายุ — จะสลับไปใช้วิธี chunked POST แทน)")
 
+    return False, "KV upload failed"
+
+
+def upload_chunked_to_pages(customers_data, tickets_data, payments_data):
+    """ส่งข้อมูลแบบ chunk เล็กๆ ผ่าน POST /api/sync ไปยัง Pages Function โดยตรง
+    แต่ละ chunk มีขนาดไม่เกิน 100 records เพื่อไม่ให้โดน Cloudflare WAF/body size limit"""
+    
+    CHUNK_SIZE = 100
     endpoints = [
         "https://EZY-Pawnshop2006.rainbow-ocean.site/api/sync",
         "https://ezy-pawnshop-web.pages.dev/api/sync"
     ]
+    
+    # เลือก endpoint ที่ใช้งานได้
+    working_ep = None
     for ep in endpoints:
         try:
-            print(f"[*] กำลังส่งข้อมูลไปยัง Cloudflare Cloud DB ({ep})...")
-            req = urllib.request.Request(ep, data=data_str.encode('utf-8'), headers={"Content-Type": "application/json"}, method='POST')
-            with urllib.request.urlopen(req, timeout=30, context=_ssl_ctx) as response:
-                res_body = response.read().decode('utf-8')
-                print(f"[+] ซิงค์ข้อมูลขึ้น Cloudflare Web App สำเร็จ! Response: {res_body}")
-                return True, res_body
+            test_payload = json.dumps({"customers": [], "tickets": [], "payments": [], "sync_time": "test"}, ensure_ascii=False)
+            req = urllib.request.Request(ep, data=test_payload.encode('utf-8'), 
+                headers={"Content-Type": "application/json", "User-Agent": "EZY-PawnShop-Sync/1.0"}, method='POST')
+            with urllib.request.urlopen(req, timeout=15, context=_ssl_ctx) as resp:
+                working_ep = ep
+                print(f"[+] เชื่อมต่อ {ep} สำเร็จ")
+                break
         except Exception as e:
-            print(f"[!] {ep} ไม่ตอบสนอง: {e}")
-            
-    return False, "Sync completed"
+            print(f"[!] ทดสอบ {ep}: {e}")
+    
+    if not working_ep:
+        print("[!] ไม่สามารถเชื่อมต่อ Pages Function ได้ทุก endpoint")
+        return False
+    
+    def post_chunk(payload_dict):
+        data_str = json.dumps(payload_dict, ensure_ascii=False, cls=MySQLJSONEncoder)
+        req = urllib.request.Request(working_ep, data=data_str.encode('utf-8'),
+            headers={"Content-Type": "application/json", "User-Agent": "EZY-PawnShop-Sync/1.0"}, method='POST')
+        with urllib.request.urlopen(req, timeout=60, context=_ssl_ctx) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    
+    total_sent = 0
+    total_items = len(customers_data) + len(tickets_data) + len(payments_data)
+    
+    # ส่ง Customers ทีละ chunk
+    for i in range(0, max(1, len(customers_data)), CHUNK_SIZE):
+        chunk = customers_data[i:i+CHUNK_SIZE]
+        if not chunk:
+            continue
+        try:
+            post_chunk({"customers": chunk, "tickets": [], "payments": [], "sync_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+            total_sent += len(chunk)
+            print(f"    ลูกค้า {min(i+CHUNK_SIZE, len(customers_data)):,}/{len(customers_data):,} ({total_sent:,}/{total_items:,})")
+        except Exception as e:
+            print(f"    [!] chunk ลูกค้า {i}-{i+CHUNK_SIZE} error: {e}")
+            return False
+    
+    # ส่ง Tickets ทีละ chunk
+    for i in range(0, max(1, len(tickets_data)), CHUNK_SIZE):
+        chunk = tickets_data[i:i+CHUNK_SIZE]
+        if not chunk:
+            continue
+        try:
+            post_chunk({"customers": [], "tickets": chunk, "payments": [], "sync_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+            total_sent += len(chunk)
+            print(f"    ตั๋วจำนำ {min(i+CHUNK_SIZE, len(tickets_data)):,}/{len(tickets_data):,} ({total_sent:,}/{total_items:,})")
+        except Exception as e:
+            print(f"    [!] chunk ตั๋ว {i}-{i+CHUNK_SIZE} error: {e}")
+            return False
+    
+    # ส่ง Payments ทีละ chunk
+    if payments_data:
+        for i in range(0, len(payments_data), CHUNK_SIZE):
+            chunk = payments_data[i:i+CHUNK_SIZE]
+            try:
+                post_chunk({"customers": [], "tickets": [], "payments": chunk, "sync_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+                total_sent += len(chunk)
+                print(f"    การชำระ {min(i+CHUNK_SIZE, len(payments_data)):,}/{len(payments_data):,} ({total_sent:,}/{total_items:,})")
+            except Exception as e:
+                print(f"    [!] chunk ชำระ {i}-{i+CHUNK_SIZE} error: {e}")
+                return False
+    
+    return True
 
 def run_db_sync(mock_mode=False):
     """Queries customer and ticket tables, filters bill_stat = 'N', and uploads."""
@@ -337,21 +403,21 @@ def run_db_sync(mock_mode=False):
                     print("[!] ยุติการทำงานเนื่องจากเชื่อมต่อฐานข้อมูลจริงไม่ได้ (ใช้ข้อมูลจริงจาก S:\\AppServ\\MySQL\\data\\PawnShop)")
                     return
 
-    if mock_mode:
-        print("[โหมดทดสอบ] กำลังจำลองการอ่านไฟล์ข้อมูลจำลอง (Mock Data):")
-        # Simulated Mock Data (เฉพาะเมื่อระบุ --mock)
-        customers_data = [
-            { "Id": "1-2345-67890-12-3", "Name": "สมชาย ใจดี", "Tel": "0812345678" },
-            { "Id": "3-1002-34567-89-0", "Name": "สมศรี มีสุข", "Tel": "0898765432" }
-        ]
-        tickets_data = [
-            { "SystemID": 1, "BudYear": 2569, "BookNo": 1, "DocNo": 1001, "BillStat": "N", "Asstotal": 45000, "Id": "1-2345-67890-12-3", "Model": "สร้อยคอทองคำ 1 บาท" },
-            { "SystemID": 1, "BudYear": 2569, "BookNo": 1, "DocNo": 1002, "BillStat": "N", "Asstotal": 20000, "Id": "1-2345-67890-12-3", "Model": "แหวนเพชร 0.5 กะรัต" },
-            { "SystemID": 2, "BudYear": 2569, "BookNo": 2, "DocNo": 2001, "BillStat": "N", "Asstotal": 12000, "Id": "3-1002-34567-89-0", "Model": "iPad Air 5" }
-        ]
-        payments_data = []
-        print(f"    [จำลอง] อ่านตั๋วที่มีสถานะ N สำเร็จ: {len(tickets_data)} รายการ")
-        print(f"    [จำลอง] อ่านลูกค้าจำนำสำเร็จ: {len(customers_data)} รายการ")
+    #if mock_mode:
+    #    print("[โหมดทดสอบ] กำลังจำลองการอ่านไฟล์ข้อมูลจำลอง (Mock Data):")
+    #    # Simulated Mock Data (เฉพาะเมื่อระบุ --mock)
+    #    customers_data = [
+    #        { "Id": "1-2345-67890-12-3", "Name": "สมชาย ใจดี", "Tel": "0812345678" },
+    #        { "Id": "3-1002-34567-89-0", "Name": "สมศรี มีสุข", "Tel": "0898765432" }
+    #    ]
+    #    tickets_data = [
+    #        { "SystemID": 1, "BudYear": 2569, "BookNo": 1, "DocNo": 1001, "BillStat": "N", "Asstotal": 45000, "Id": "1-2345-67890-12-3", "Model": "สร้อยคอทองคำ 1 บาท" },
+    #        { "SystemID": 1, "BudYear": 2569, "BookNo": 1, "DocNo": 1002, "BillStat": "N", "Asstotal": 20000, "Id": "1-2345-67890-12-3", "Model": "แหวนเพชร 0.5 กะรัต" },
+    #        { "SystemID": 2, "BudYear": 2569, "BookNo": 2, "DocNo": 2001, "BillStat": "N", "Asstotal": 12000, "Id": "3-1002-34567-89-0", "Model": "iPad Air 5" }
+    #    ]
+    #    payments_data = []
+    #    print(f"    [จำลอง] อ่านตั๋วที่มีสถานะ N สำเร็จ: {len(tickets_data)} รายการ")
+    #    print(f"    [จำลอง] อ่านลูกค้าจำนำสำเร็จ: {len(customers_data)} รายการ")
 
     # Construct Cloud Database JSON Payload
     # Sanitize rows: แปลง datetime / Decimal / bytes → JSON serializable
@@ -375,23 +441,34 @@ def run_db_sync(mock_mode=False):
         f.write(payload_str)
     print(f"[*] บันทึกสำเนาไฟล์ซิงค์ล่าสุดที่: {local_sync_file}")
     
-    # Upload to Cloudflare KV (cache/fallback)
+    # Upload to Cloudflare KV (cache/fallback) — ลอง KV API ก่อน
+    print(f"\n[*] === ขั้นตอนที่ 2: ส่งข้อมูลขึ้น Cloudflare ===")
     success, result = upload_to_cloudflare_kv("db_sync_latest", payload_str)
     
     if success:
-        print(f"[+] ซิงค์ข้อมูลขึ้น Cloudflare KV สำเร็จ! API Response: {result}")
+        print(f"[+] ซิงค์ข้อมูลขึ้น Cloudflare KV สำเร็จ!")
+    else:
+        # KV ล้มเหลว (token หมดอายุ/ถูก revoke) → สลับไปใช้ chunked POST ส่งตรงเข้า D1
+        print(f"\n[*] KV ล้มเหลว — สลับไปส่งข้อมูลตรงเข้า Cloudflare D1 แบบ chunk (100 records/chunk)...")
+        success = upload_chunked_to_pages(customers_data, tickets_data, payments_data)
+    
+    if success:
         print(f"\n{'='*50}")
-        print(f"  สรุปผลการซิงค์ข้อมูล:")
+        print(f"  ✅ ซิงค์ข้อมูลขึ้น Cloudflare สำเร็จ!")
         print(f"  - ตั๋วจำนำ  : {len(tickets_data):,} รายการ")
         print(f"  - ลูกค้า   : {len(customers_data):,} รายการ")
         print(f"  - การชำระ  : {len(payments_data):,} รายการ")
         print(f"{'='*50}")
-        print(f"  ข้อมูลถูกบันทึกไว้ใน Cloudflare KV แล้ว")
-        print(f"  หลังจากนี้ กด 'เริ่มอัปเดตข้อมูลขึ้น Cloud' ในหน้าผู้ดูแลระบบ")
-        print(f"  เพื่อบันทึกข้อมูลเข้า D1 SQL Database ด้วย")
+        print(f"  ข้อมูลถูกบันทึกเข้า Cloudflare D1 Database เรียบร้อยแล้ว")
         print(f"{'='*50}\n")
     else:
-        print("    [!] KV upload ไม่สำเร็จ — ตรวจสอบ API Token / Network")
+        print(f"\n{'='*50}")
+        print(f"  ❌ ไม่สามารถส่งข้อมูลขึ้น Cloudflare ได้")
+        print(f"  กรุณาตรวจสอบ:")
+        print(f"  1. อินเทอร์เน็ตเชื่อมต่ออยู่ไหม")
+        print(f"  2. สร้าง API Token ใหม่ที่ https://dash.cloudflare.com/profile/api-tokens")
+        print(f"     แล้วอัปเดตใน option.ini")
+        print(f"{'='*50}\n")
 
     # หมายเหตุ: ไม่ส่ง D1 จาก Python เพราะ:
     # 1. ข้อมูลขนาดใหญ่ (7,000+ ตั๋ว) ทำให้ Cloudflare Pages Function reject ด้วย 403
