@@ -240,68 +240,81 @@ let db = {
 };
 
 // ==================== AUTO-FETCH CLOUD DATA ON PAGE LOAD ====================
-// ดึงข้อมูลจริงจาก Cloudflare D1 SQL Database มาอัปเดต localStorage ทุกครั้งที่เปิดหน้าเว็บ
-// ให้ refresh ข้อมูลให้ตรงกับ Cloudflare เสมอ (รวมถึงกรณีที่มีการล้างหรือลบข้อมูลใน cloud เช่น payments)
+// ดึงข้อมูลจริงจาก Cloudflare (ลองจาก /api/sync หรือ /last_cloud_sync.json)
+// มาอัปเดต localStorage ทุกครั้งที่เปิดหน้าเว็บ เพื่อให้ Login และแสดงตั๋วได้ 100% เสมอ
 async function refreshCloudData(forceRender = true) {
+  let cloudData = null;
+
+  // 1. ลองดึงจาก /api/sync
   try {
     const res = await fetch('/api/sync?t=' + Date.now());
-    if (!res.ok) return false;
-    const cloudData = await res.json();
+    const contentType = res.headers.get('content-type') || '';
+    if (res.ok && contentType.includes('application/json')) {
+      cloudData = await res.json();
+    }
+  } catch (e) {}
+
+  // 2. ถ้าดึงจาก /api/sync ไม่ได้ ให้ดึงจาก /last_cloud_sync.json บน Cloudflare Pages CDN
+  if (!cloudData || (!cloudData.customers && !cloudData.tickets)) {
+    try {
+      const res2 = await fetch('/last_cloud_sync.json?t=' + Date.now());
+      if (res2.ok) {
+        cloudData = await res2.json();
+      }
+    } catch (e) {}
+  }
+
+  if (cloudData) {
+    // 1. Tickets
+    if (Array.isArray(cloudData.tickets) && cloudData.tickets.length > 0) {
+      db.tickets = normalizeKeys(cloudData.tickets);
+      localStorage.setItem('pawn_tickets', JSON.stringify(db.tickets));
+    }
     
-    if (cloudData) {
-      // 1. Tickets
-      if (Array.isArray(cloudData.tickets)) {
-        db.tickets = normalizeKeys(cloudData.tickets);
-        localStorage.setItem('pawn_tickets', JSON.stringify(db.tickets));
-      }
-      
-      // 2. Customers
-      if (Array.isArray(cloudData.customers) && cloudData.customers.length > 0) {
-        const customers = normalizeKeys(cloudData.customers);
-        customers.forEach(c => {
-          if (c.Name) c.Name = String(c.Name).replace(/\s+/g, ' ').trim();
-        });
-        db.customers = customers;
-        localStorage.setItem('pawn_customers', JSON.stringify(db.customers));
-      }
-      
-      // 3. Payments (อัปเดตเสมอ แม้ว่าจะเป็น array ว่าง [] เพราะอาจมีการลบหรือล้างข้อมูลใน Cloud)
-      if (Array.isArray(cloudData.payments)) {
-        db.payments = normalizeKeys(cloudData.payments);
-        localStorage.setItem('pawn_payments', JSON.stringify(db.payments));
-      }
-      
-      // 4. Config
-      if (cloudData.config && typeof cloudData.config === 'object') {
-        db.config = { ...db.config, ...cloudData.config };
-        localStorage.setItem('pawn_config', JSON.stringify(db.config));
-        applyBankSettingsToUI();
-      }
-      
-      console.log(`[Cloud Sync] ซิงค์ข้อมูลล่าสุดจาก Cloudflare สำเร็จ: ${db.tickets.length} ตั๋ว, ${db.customers.length} ลูกค้า, ${db.payments.length} การชำระ`);
-      
-      if (forceRender) {
-        if (state.userRole === 'customer' && state.currentUser) {
-          const activeTab = document.querySelector('#client-portal .tab-screen.active');
-          if (activeTab) {
-            if (activeTab.id === 'tab-home') renderCustomerHome();
-            else if (activeTab.id === 'tab-tickets') renderCustomerTickets();
-            else if (activeTab.id === 'tab-pay') renderCustomerPayInterest();
-          }
-        } else if (state.userRole === 'admin') {
-          const activeAdmin = document.querySelector('.admin-viewport .admin-screen.active');
-          if (activeAdmin) {
-            if (activeAdmin.id === 'scr-reconcile') renderAdminReconcile();
-            else if (activeAdmin.id === 'scr-dashboard') renderAdminDashboard();
-            else if (activeAdmin.id === 'scr-tickets') renderAdminTickets();
-            else if (activeAdmin.id === 'scr-report') renderAdminReport();
-          }
+    // 2. Customers
+    if (Array.isArray(cloudData.customers) && cloudData.customers.length > 0) {
+      const customers = normalizeKeys(cloudData.customers);
+      customers.forEach(c => {
+        if (c.Name) c.Name = String(c.Name).replace(/\s+/g, ' ').trim();
+      });
+      db.customers = customers;
+      localStorage.setItem('pawn_customers', JSON.stringify(db.customers));
+    }
+    
+    // 3. Payments
+    if (Array.isArray(cloudData.payments)) {
+      db.payments = normalizeKeys(cloudData.payments);
+      localStorage.setItem('pawn_payments', JSON.stringify(db.payments));
+    }
+    
+    // 4. Config
+    if (cloudData.config && typeof cloudData.config === 'object') {
+      db.config = { ...db.config, ...cloudData.config };
+      localStorage.setItem('pawn_config', JSON.stringify(db.config));
+      applyBankSettingsToUI();
+    }
+    
+    console.log(`[Cloud Sync] ซิงค์ข้อมูลล่าสุดสำเร็จ: ${db.tickets.length} ตั๋ว, ${db.customers.length} ลูกค้า, ${db.payments.length} การชำระ`);
+    
+    if (forceRender) {
+      if (state.userRole === 'customer' && state.currentUser) {
+        const activeTab = document.querySelector('#client-portal .tab-screen.active');
+        if (activeTab) {
+          if (activeTab.id === 'tab-home') renderCustomerHome();
+          else if (activeTab.id === 'tab-tickets') renderCustomerTickets();
+          else if (activeTab.id === 'tab-pay') renderCustomerPayInterest();
+        }
+      } else if (state.userRole === 'admin') {
+        const activeAdmin = document.querySelector('.admin-viewport .admin-screen.active');
+        if (activeAdmin) {
+          if (activeAdmin.id === 'scr-reconcile') renderAdminReconcile();
+          else if (activeAdmin.id === 'scr-dashboard') renderAdminDashboard();
+          else if (activeAdmin.id === 'scr-tickets') renderAdminTickets();
+          else if (activeAdmin.id === 'scr-report') renderAdminReport();
         }
       }
-      return true;
     }
-  } catch (e) {
-    console.log('[Cloud Sync] ไม่สามารถดึงข้อมูลจาก Cloud:', e.message);
+    return true;
   }
   return false;
 }
