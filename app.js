@@ -241,46 +241,72 @@ let db = {
 
 // ==================== AUTO-FETCH CLOUD DATA ON PAGE LOAD ====================
 // ดึงข้อมูลจริงจาก Cloudflare D1 SQL Database มาอัปเดต localStorage ทุกครั้งที่เปิดหน้าเว็บ
-// เพื่อให้ login ใช้ข้อมูลลูกค้าจริง 3,400+ คนจาก MySQL ทันที
-let _cloudDataReady = (async function autoFetchCloudData() {
+// ให้ refresh ข้อมูลให้ตรงกับ Cloudflare เสมอ (รวมถึงกรณีที่มีการล้างหรือลบข้อมูลใน cloud เช่น payments)
+async function refreshCloudData(forceRender = true) {
   try {
     const res = await fetch('/api/sync?t=' + Date.now());
-    if (!res.ok) return;
+    if (!res.ok) return false;
     const cloudData = await res.json();
     
-    if (cloudData && ((cloudData.customers && cloudData.customers.length > 0) || (cloudData.tickets && cloudData.tickets.length > 0))) {
-      const tickets   = normalizeKeys(cloudData.tickets || []);
-      const customers = normalizeKeys(cloudData.customers || []);
-      const payments  = normalizeKeys(cloudData.payments  || []);
-      
-      // ตัดช่องว่างท้ายชื่อลูกค้า
-      customers.forEach(c => {
-        if (c.Name) c.Name = String(c.Name).replace(/\s+/g, ' ').trim();
-      });
-      
-      // อัปเดต db object ที่ใช้ทั้งหน้าเว็บ (รวมถึง Login)
-      db.tickets   = tickets;
-      db.customers = customers;
-      db.payments  = payments;
-      
-      // บันทึกลง localStorage ด้วย
-      localStorage.setItem('pawn_tickets',   JSON.stringify(tickets));
-      localStorage.setItem('pawn_customers', JSON.stringify(customers));
-      localStorage.setItem('pawn_payments',  JSON.stringify(payments));
-      
-      // อัปเดต config จาก Cloud (ถ้ามี)
-      if (cloudData.config && Object.keys(cloudData.config).length > 0) {
-        const merged = { ...db.config, ...cloudData.config };
-        db.config = merged;
-        localStorage.setItem('pawn_config', JSON.stringify(merged));
+    if (cloudData) {
+      // 1. Tickets
+      if (Array.isArray(cloudData.tickets)) {
+        db.tickets = normalizeKeys(cloudData.tickets);
+        localStorage.setItem('pawn_tickets', JSON.stringify(db.tickets));
       }
       
-      console.log(`[Cloud Sync] โหลดข้อมูลจริงสำเร็จ: ${tickets.length} ตั๋ว, ${customers.length} ลูกค้า`);
+      // 2. Customers
+      if (Array.isArray(cloudData.customers) && cloudData.customers.length > 0) {
+        const customers = normalizeKeys(cloudData.customers);
+        customers.forEach(c => {
+          if (c.Name) c.Name = String(c.Name).replace(/\s+/g, ' ').trim();
+        });
+        db.customers = customers;
+        localStorage.setItem('pawn_customers', JSON.stringify(db.customers));
+      }
+      
+      // 3. Payments (อัปเดตเสมอ แม้ว่าจะเป็น array ว่าง [] เพราะอาจมีการลบหรือล้างข้อมูลใน Cloud)
+      if (Array.isArray(cloudData.payments)) {
+        db.payments = normalizeKeys(cloudData.payments);
+        localStorage.setItem('pawn_payments', JSON.stringify(db.payments));
+      }
+      
+      // 4. Config
+      if (cloudData.config && typeof cloudData.config === 'object') {
+        db.config = { ...db.config, ...cloudData.config };
+        localStorage.setItem('pawn_config', JSON.stringify(db.config));
+        applyBankSettingsToUI();
+      }
+      
+      console.log(`[Cloud Sync] ซิงค์ข้อมูลล่าสุดจาก Cloudflare สำเร็จ: ${db.tickets.length} ตั๋ว, ${db.customers.length} ลูกค้า, ${db.payments.length} การชำระ`);
+      
+      if (forceRender) {
+        if (state.userRole === 'customer' && state.currentUser) {
+          const activeTab = document.querySelector('#client-portal .tab-screen.active');
+          if (activeTab) {
+            if (activeTab.id === 'tab-home') renderCustomerHome();
+            else if (activeTab.id === 'tab-tickets') renderCustomerTickets();
+            else if (activeTab.id === 'tab-pay') renderCustomerPayInterest();
+          }
+        } else if (state.userRole === 'admin') {
+          const activeAdmin = document.querySelector('.admin-viewport .admin-screen.active');
+          if (activeAdmin) {
+            if (activeAdmin.id === 'scr-reconcile') renderAdminReconcile();
+            else if (activeAdmin.id === 'scr-dashboard') renderAdminDashboard();
+            else if (activeAdmin.id === 'scr-tickets') renderAdminTickets();
+            else if (activeAdmin.id === 'scr-report') renderAdminReport();
+          }
+        }
+      }
+      return true;
     }
   } catch (e) {
     console.log('[Cloud Sync] ไม่สามารถดึงข้อมูลจาก Cloud:', e.message);
   }
-})();
+  return false;
+}
+
+let _cloudDataReady = refreshCloudData(false);
 
 // Global padding utility
 function pad(num) {
@@ -756,22 +782,24 @@ function isTicketOfCustomer(t, user) {
 function renderCustomerHome() {
   const custTickets = db.tickets.filter(t => isTicketOfCustomer(t, state.currentUser) && t.BillStat === 'N');
   
-  // Ticket Count and Sum
+  // Ticket Count and Sum (คำนวณยอดเงินรับจำนำรวมอย่างถูกต้อง โดยแปลงเป็น Number ก่อน)
   document.getElementById('cust-ticket-count').innerText = custTickets.length;
   
-  const totalSum = custTickets.reduce((acc, t) => acc + t.Asstotal, 0);
-  document.getElementById('cust-ticket-sum').innerText = totalSum.toLocaleString('th-TH');
+  const totalSum = custTickets.reduce((acc, t) => acc + (Number(t.Asstotal) || 0), 0);
+  document.getElementById('cust-ticket-sum').innerText = (Number(totalSum) || 0).toLocaleString('th-TH');
   
   // Calculate aggregate interest up to current date
   let totalInterest = 0;
   custTickets.forEach(t => {
     const calc = calculateActiveInterest(t);
-    totalInterest += calc.interestAmount;
+    totalInterest += (Number(calc.interestAmount) || 0);
   });
   
   const todayVal = new Date();
   const padVal = (num) => String(num).padStart(2, '0');
-  const dateFormatted = `${padVal(todayVal.getDate())}/${padVal(todayVal.getMonth()+1)}/${todayVal.getFullYear()}`;
+  let y = todayVal.getFullYear();
+  if (y < 2400) y += 543;
+  const dateFormatted = `${padVal(todayVal.getDate())}/${padVal(todayVal.getMonth()+1)}/${y}`;
   
   const sumEl = document.getElementById('cust-interest-sum-val');
   if (sumEl) sumEl.innerText = totalInterest.toLocaleString('th-TH', {minimumFractionDigits: 2, maximumFractionDigits: 2});
@@ -823,9 +851,9 @@ function renderCustomerTickets() {
     if (t.BillStat === 'C') statusText = 'เพิ่มต้นสำเร็จ';
     if (t.BillStat === 'D') statusText = 'ลดต้นสำเร็จ';
     
-    // Calculate months like in pay interest screen
+    const asstotalNum = Number(t.Asstotal) || 0;
     const interestCalc = calculateActiveInterest(t);
-    const monthlyInt = t.MonthInt || (t.Asstotal * 0.015);
+    const monthlyInt = Number(t.MonthInt) || (asstotalNum * 0.015);
     
     // Format dates
     const appDateFormatted = formatThaiDate(t.AppDate);
@@ -838,11 +866,11 @@ function renderCustomerTickets() {
       </div>
       <div class="ticket-row flex-row-between">
         <span class="ticket-label">รายการทรัพย์สิน:</span>
-        <span class="ticket-val">${t.Model}</span>
+        <span class="ticket-val">${t.Model || '-'}</span>
       </div>
       <div class="ticket-row flex-row-between">
         <span class="ticket-label">ยอดเงินรับจำนำ:</span>
-        <span class="ticket-val price">${t.Asstotal.toLocaleString('th-TH')} บาท</span>
+        <span class="ticket-val price">${asstotalNum.toLocaleString('th-TH')} บาท</span>
       </div>
       <div class="ticket-row flex-row-between">
         <span class="ticket-label">จำนวนเดือน:</span>
@@ -900,10 +928,11 @@ function renderCustomerPayInterest() {
   
   activeTickets.forEach(t => {
     const calc = calculateActiveInterest(t);
+    const asstotalNum = Number(t.Asstotal) || 0;
     const card = document.createElement('div');
     card.className = 'selectable-ticket';
     card.id = `select-t-${t.DocNo}`;
-    card.onclick = () => toggleSelectTicket(t.DocNo, t.BookNo, t.Asstotal, calc.interestAmount);
+    card.onclick = () => toggleSelectTicket(t.DocNo, t.BookNo, asstotalNum, calc.interestAmount);
     
     const expDateFormatted = formatThaiDate(t.ExpDate);
     
@@ -912,11 +941,11 @@ function renderCustomerPayInterest() {
         เล่มที่ ${t.BookNo} เลขที่ ${t.DocNo}
       </div>
       <div style="font-size: 13px; color: var(--text-medium); margin-bottom: 4px;">
-        รายการ: ${t.Model}
+        รายการ: ${t.Model || '-'}
       </div>
       <div class="flex-row-between" style="font-size: 13px; margin-bottom: 4px;">
         <span>เงินรับจำนำ:</span>
-        <span class="number" style="font-weight: 600;">${t.Asstotal.toLocaleString('th-TH')} บาท</span>
+        <span class="number" style="font-weight: 600;">${asstotalNum.toLocaleString('th-TH')} บาท</span>
       </div>
       <div class="flex-row-between" style="font-size: 13px; margin-bottom: 4px; color: var(--primary-red);">
         <span>ดอกเบี้ยค้างชำระ (${calc.months} เดือน):</span>
@@ -990,47 +1019,8 @@ function showPaymentDetailsScreen() {
   document.getElementById('pay-select-tickets-view').classList.add('hidden');
   document.getElementById('pay-details-screen').classList.remove('hidden');
   
-  // Render Config values
-  document.getElementById('cfg-bank-name').innerText = db.config.bank_name;
-  
-  const logoEl = document.getElementById('cfg-bank-logo');
-  const logoVal = db.config.bank_logo || '';
-  const isImagePath = /\.(jpg|jpeg|png|gif|ico)$/i.test(logoVal) || logoVal.includes('\\') || logoVal.includes('/');
-  
-  if (isImagePath) {
-    let srcVal = logoVal;
-    if (srcVal.includes('\\') || srcVal.includes('/')) {
-      const parts = srcVal.split(/[\\/]/);
-      srcVal = parts[parts.length - 1];
-    }
-    logoEl.innerHTML = `<img src="${srcVal}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">`;
-    logoEl.style.setProperty('padding', '0', 'important');
-    logoEl.style.setProperty('background', 'none', 'important');
-  } else {
-    logoEl.innerText = logoVal;
-    logoEl.style.setProperty('padding', '', '');
-    logoEl.style.setProperty('background', '', '');
-  }
-  
-  document.getElementById('cfg-bank-acc').innerText = db.config.bank_acc;
-  document.getElementById('cfg-bank-acc-name').innerText = db.config.bank_acc_name;
-  
-  // Set Bank Brand Colors dynamically
-  const bankCard = document.querySelector('.bank-info-card');
-  if (bankCard) {
-    bankCard.className = 'bank-info-card'; // reset classes
-    const customColor = db.config.bank_color || '#178e3d';
-    
-    // Apply dynamic inline styles with important flag to override static css
-    bankCard.style.setProperty('background-color', customColor + '10', 'important'); // 10% transparency for background
-    bankCard.style.setProperty('border-left', '5px solid ' + customColor, 'important');
-    bankCard.style.setProperty('border-color', customColor, 'important');
-    
-    if (!isImagePath) {
-      logoEl.style.setProperty('background-color', customColor, 'important');
-      logoEl.style.setProperty('color', '#ffffff', 'important');
-    }
-  }
+  // Render Bank Config & Styles dynamically
+  applyBankSettingsToUI();
   
   // Summarize payment values
   const count = state.selectedTickets.length;
@@ -1224,7 +1214,7 @@ function submitPayment() {
   const prefix = `O${year2}${month2}${date2}`;
   
   // Calculate increment number
-  const sameDayBills = db.payments.filter(p => p.BillNo.startsWith(prefix));
+  const sameDayBills = (db.payments || []).filter(p => p.BillNo && p.BillNo.startsWith(prefix));
   const seqNum = sameDayBills.length + 1;
   const billNo = `${prefix}-${String(seqNum).padStart(4, '0')}`;
   
@@ -1234,7 +1224,7 @@ function submitPayment() {
     if (ticket) {
       const calc = calculateActiveInterest(ticket);
       // 1. Update ticket fields
-      ticket.BillType = '9'; // ยืนยันการชำระ
+      ticket.BillType = '9'; // ยืนยันการชำระ / รอตรวจสอบ
       ticket.BillDate = formattedDate;
       ticket.BillNo = billNo;
       ticket.Totalint = calc.interestAmount; // Update to the calculated interest
@@ -1257,11 +1247,11 @@ function submitPayment() {
     }
   });
   
-  // Save tables
+  // Save tables locally and sync to Cloudflare
   saveDBTable('tickets');
   saveDBTable('payments');
   
-  alert(`ส่งข้อมูลหลักฐานเรียบร้อยแล้ว!\nรหัสชำระเงิน: ${billNo}\nระบบกำลังดำเนินการตรวจสอบความถูกต้องของสลิป`);
+  alert(`✅ ส่งข้อมูลหลักฐานเรียบร้อยแล้ว!\nรหัสรับชำระ: ${billNo}\n\nระบบได้ส่งข้อมูลหลักฐานไปยังโรงรับจำนำเรียบร้อยแล้ว อยู่ระหว่างเจ้าหน้าที่ตรวจสอบ`);
   
   // Reset payment states & return
   state.selectedTickets = [];
@@ -1637,11 +1627,11 @@ function renderAdminReconcile() {
     filtered = filtered.filter(p => Number(p.SystemID) === Number(systemIdVal));
   }
   
-  // Sort payments: pending '9' first, then approved '2'
+  // Sort payments: เรียงลำดับ รหัสรับชำระ (BillNo) จากน้อยไปมาก
   filtered.sort((a, b) => {
-    if (a.BillType === '9' && b.BillType !== '9') return -1;
-    if (a.BillType !== '9' && b.BillType === '9') return 1;
-    return new Date(b.BillDate) - new Date(a.BillDate);
+    const billA = String(a.BillNo || '');
+    const billB = String(b.BillNo || '');
+    return billA.localeCompare(billB, undefined, { numeric: true, sensitivity: 'base' });
   });
   
   if (dateVal) {
@@ -2443,32 +2433,53 @@ function renderAdminSettings() {
 function applyBankSettingsToUI() {
   const cfg = db.config || {};
   
-  // Bank Logo
+  // 1. Bank Name
+  const nameEl = document.getElementById('cfg-bank-name');
+  if (nameEl) nameEl.innerText = cfg.bank_name || 'ธนาคารกสิกรไทย';
+  
+  // 2. Bank Acc
+  const accEl = document.getElementById('cfg-bank-acc');
+  if (accEl) accEl.innerText = cfg.bank_acc || '026-8-91256-0';
+  
+  // 3. Bank Acc Name
+  const accNameEl = document.getElementById('cfg-bank-acc-name');
+  if (accNameEl) accNameEl.innerText = cfg.bank_acc_name || 'บจ. อีซี่ โรงรับจำนำ 2006';
+
+  // 4. Custom Color
+  const customColor = cfg.bank_color || '#178e3d';
+
+  // 5. Bank Logo
   const logoEl = document.getElementById('cfg-bank-logo');
+  const logoVal = String(cfg.bank_logo || 'KB').trim();
+  const isImagePath = /\.(jpg|jpeg|png|gif|ico)$/i.test(logoVal) || logoVal.includes('\\') || logoVal.includes('/') || logoVal.startsWith('data:') || logoVal.startsWith('http');
+  
   if (logoEl) {
-    if (cfg.bank_logo && (cfg.bank_logo.endsWith('.jpg') || cfg.bank_logo.endsWith('.png') || cfg.bank_logo.endsWith('.jpeg') || cfg.bank_logo.startsWith('http') || cfg.bank_logo.startsWith('data:'))) {
-      logoEl.innerHTML = `<img src="${cfg.bank_logo}" alt="Bank Logo" style="width:100%; height:100%; object-fit:contain; border-radius:50%;">`;
+    if (isImagePath) {
+      let srcVal = logoVal;
+      if (srcVal.includes('\\') || srcVal.includes('/')) {
+        const parts = srcVal.split(/[\\/]/);
+        srcVal = parts[parts.length - 1];
+      }
+      logoEl.innerHTML = `<img src="${srcVal}" alt="Bank Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;">`;
+      logoEl.style.setProperty('padding', '0', 'important');
+      logoEl.style.setProperty('background', 'none', 'important');
     } else {
-      logoEl.innerText = cfg.bank_logo || 'KB';
-    }
-    if (cfg.bank_color) {
-      logoEl.style.backgroundColor = cfg.bank_color;
+      logoEl.innerText = logoVal || 'KB';
+      logoEl.style.setProperty('padding', '', '');
+      logoEl.style.setProperty('background-color', customColor, 'important');
+      logoEl.style.setProperty('color', '#ffffff', 'important');
     }
   }
-  
-  // Bank Name
-  const nameEl = document.getElementById('cfg-bank-name');
-  if (nameEl && cfg.bank_name) nameEl.innerText = cfg.bank_name;
-  
-  // Bank Acc
-  const accEl = document.getElementById('cfg-bank-acc');
-  if (accEl && cfg.bank_acc) accEl.innerText = cfg.bank_acc;
-  
-  // Bank Acc Name
-  const accNameEl = document.getElementById('cfg-bank-acc-name');
-  if (accNameEl && cfg.bank_acc_name) accNameEl.innerText = cfg.bank_acc_name;
-  
-  // Admin Sidebar Shop Name
+
+  // 6. Bank Card Styling (border, background)
+  const bankCard = document.querySelector('.bank-info-card');
+  if (bankCard) {
+    bankCard.style.setProperty('background-color', customColor + '15', 'important'); // 15% transparency
+    bankCard.style.setProperty('border-left', '5px solid ' + customColor, 'important');
+    bankCard.style.setProperty('border-color', customColor, 'important');
+  }
+
+  // 7. Admin Sidebar Shop Name
   const sidebarShopEl = document.getElementById('admin-sidebar-shop-name');
   if (sidebarShopEl && cfg.shop_name) sidebarShopEl.innerText = cfg.shop_name;
 }
@@ -3108,49 +3119,13 @@ function setAdminSystemIdFilter(val) {
   updateSystemVersionDisplay();
 }
 
-async function fetchCloudSyncDataOnLoad() {
-  try {
-    const res = await fetch('/api/sync?t=' + Date.now());
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.tickets && data.customers && data.tickets.length > 0) {
-        db.tickets = normalizeKeys(data.tickets);
-        db.customers = normalizeKeys(data.customers);
-        localStorage.setItem('pawn_tickets', JSON.stringify(db.tickets));
-        localStorage.setItem('pawn_customers', JSON.stringify(db.customers));
-        console.log('[Cloud Sync] Auto-synced tickets & customers from Cloudflare');
-      }
-      if (data && data.payments && Array.isArray(data.payments) && data.payments.length > 0) {
-        db.payments = normalizeKeys(data.payments);
-        localStorage.setItem('pawn_payments', JSON.stringify(db.payments));
-        console.log('[Cloud Sync] Auto-synced payments from Cloudflare');
-        const activeAdminScreen = document.querySelector('.admin-viewport .admin-screen.active');
-        if (activeAdminScreen && activeAdminScreen.id === 'scr-reconcile') {
-          renderAdminReconcile();
-        }
-      }
-      // Sync config (bank name, color, logo) if available from cloud
-      if (data && data.config && typeof data.config === 'object') {
-        // Merge cloud config into local (cloud takes priority for shared settings)
-        const mergedConfig = Object.assign({}, db.config, data.config);
-        db.config = mergedConfig;
-        localStorage.setItem('pawn_config', JSON.stringify(db.config));
-        console.log('[Cloud Sync] Config synced from cloud (bank name/color/logo updated)');
-        applyBankSettingsToUI();
-      }
-    }
-  } catch (e) {
-    console.log('[Cloud Sync] Running in local storage fallback mode');
-  }
-}
-
 // Execute on script load
 window.onload = function() {
   setupDragAndDrop();
   startAdminClock();
   updateSystemVersionDisplay();
   applyBankSettingsToUI();
-  fetchCloudSyncDataOnLoad();
+  refreshCloudData(true);
   
   // Register keyboard shortcut listeners
   window.addEventListener('keydown', (e) => {
