@@ -448,49 +448,37 @@ async function handleLogin() {
     return;
   }
 
-  // 2. Customer Login via Real-Time Cloudflare D1 API
+  // 2. Customer Login
   if (loginBtn) {
     loginBtn.disabled = true;
     loginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังตรวจสอบข้อมูล...';
   }
 
+  // Ensure Cloud Data is loaded into memory
+  if (_cloudDataReady) {
+    try { await _cloudDataReady; } catch(e) {}
+  }
+  if (!db.customers || db.customers.length <= 2) {
+    try {
+      const res = await fetch('/api/sync?t=' + Date.now());
+      if (res.ok) {
+        const cloudData = await res.json();
+        if (cloudData && cloudData.customers && cloudData.customers.length > 0) {
+          db.customers = normalizeKeys(cloudData.customers);
+          db.tickets   = normalizeKeys(cloudData.tickets || []);
+          db.payments  = normalizeKeys(cloudData.payments  || []);
+          localStorage.setItem('pawn_customers', JSON.stringify(db.customers));
+          localStorage.setItem('pawn_tickets',   JSON.stringify(db.tickets));
+          localStorage.setItem('pawn_payments',  JSON.stringify(db.payments));
+        }
+      }
+    } catch(e) {}
+  }
+
   const plainInputId = inputId.replace(/[^0-9a-zA-Z]/g, '');
   const plainInputContact = inputContact.replace(/[^0-9]/g, '');
 
-  try {
-    const res = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: plainInputId, contact: plainInputContact })
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.success && data.customer) {
-        state.currentUser = normalizeKeys(data.customer);
-        state.userRole = 'customer';
-        
-        // บันทึกตั๋วเฉพาะของลูกค้ารายนี้ลงใน db.tickets
-        if (Array.isArray(data.tickets) && data.tickets.length > 0) {
-          const userTickets = normalizeKeys(data.tickets);
-          const otherTickets = (db.tickets || []).filter(t => !isTicketOfCustomer(t, state.currentUser));
-          db.tickets = [...otherTickets, ...userTickets];
-          saveDBTable('tickets');
-        }
-
-        if (loginBtn) {
-          loginBtn.disabled = false;
-          loginBtn.innerHTML = originalBtnText;
-        }
-        triggerOtpFlow(state.currentUser.Tel);
-        return;
-      }
-    }
-  } catch (err) {
-    console.warn('Online cloud login error, checking local db:', err);
-  }
-
-  // 3. Fallback: Search in local memory db.customers
+  // Search in db.customers
   const customer = (db.customers || []).find(c => {
     const dbId = String(c.Id || '').replace(/[^0-9a-zA-Z]/g, '');
     const dbCustCode = String(c.CustCode || '').replace(/[^0-9a-zA-Z]/g, '');
@@ -517,7 +505,7 @@ async function handleLogin() {
     return;
   }
 
-  // 4. Not found, show spec warning message
+  // 3. Not found, show spec warning message
   errorEl.innerText = '* ไม่พบข้อมูลลูกค้าในระบบ กรุณาติดต่อโรงรับจำนำฯ ใน วัน - เวลาทำการ  จ.-ศ. 09.00 – 15.00 น.';
   errorEl.classList.remove('hidden');
 }
