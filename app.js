@@ -152,6 +152,8 @@ function normalizeKeys(obj) {
     'docno': 'DocNo',
     'asstotal': 'Asstotal',
     'id': 'Id',
+    'custcode': 'CustCode',
+    'cust_code': 'CustCode',
     'model': 'Model',
     'billstat': 'BillStat',
     'monthint': 'MonthInt',
@@ -238,16 +240,15 @@ let db = {
 };
 
 // ==================== AUTO-FETCH CLOUD DATA ON PAGE LOAD ====================
-// ดึงข้อมูลจริงจาก Cloudflare (KV/D1) มาอัปเดต localStorage ทุกครั้งที่เปิดหน้าเว็บ
-// เพื่อให้ login ใช้ข้อมูลลูกค้าจริงจาก MySQL ไม่ใช่ Mockup
+// ดึงข้อมูลจริงจาก Cloudflare D1 SQL Database มาอัปเดต localStorage ทุกครั้งที่เปิดหน้าเว็บ
+// เพื่อให้ login ใช้ข้อมูลลูกค้าจริง 3,400+ คนจาก MySQL ทันที
 let _cloudDataReady = (async function autoFetchCloudData() {
   try {
     const res = await fetch('/api/sync?t=' + Date.now());
     if (!res.ok) return;
     const cloudData = await res.json();
     
-    // อัปเดตเฉพาะเมื่อมีข้อมูลจริง (มากกว่า Mockup)
-    if (cloudData && cloudData.customers && cloudData.customers.length > 4) {
+    if (cloudData && ((cloudData.customers && cloudData.customers.length > 0) || (cloudData.tickets && cloudData.tickets.length > 0))) {
       const tickets   = normalizeKeys(cloudData.tickets || []);
       const customers = normalizeKeys(cloudData.customers || []);
       const payments  = normalizeKeys(cloudData.payments  || []);
@@ -436,15 +437,41 @@ async function handleLogin() {
   if (_cloudDataReady) {
     try { await _cloudDataReady; } catch(e) {}
   }
+
+  // ถ้ายังไม่มีข้อมูลลูกค้าใน db (เช่นเปิดครั้งแรก) ดึงตรงๆ จาก Cloudflare ทันที
+  if (!db.customers || db.customers.length <= 2) {
+    try {
+      const res = await fetch('/api/sync?t=' + Date.now());
+      if (res.ok) {
+        const cloudData = await res.json();
+        if (cloudData && cloudData.customers && cloudData.customers.length > 0) {
+          db.customers = normalizeKeys(cloudData.customers);
+          db.tickets   = normalizeKeys(cloudData.tickets || []);
+          db.payments  = normalizeKeys(cloudData.payments  || []);
+          localStorage.setItem('pawn_customers', JSON.stringify(db.customers));
+          localStorage.setItem('pawn_tickets',   JSON.stringify(db.tickets));
+          localStorage.setItem('pawn_payments',  JSON.stringify(db.payments));
+        }
+      }
+    } catch(e) {}
+  }
   
-  // 1. Search in Customer (ใช้ Id = card_no 13 หลัก + Tel = เบอร์โทร)
+  // 1. Search in Customer (ใช้ Id = card_no 13 หลัก หรือ CustCode 15 หลัก + Tel = เบอร์โทร)
   const plainInputId = inputId.replace(/[^0-9a-zA-Z]/g, '');
   const plainInputContact = inputContact.replace(/[^0-9]/g, '');
   
   const customer = db.customers.find(c => {
-    const dbId = (c.Id || '').replace(/[^0-9a-zA-Z]/g, '');
-    const dbTel = (c.Tel || '').replace(/[^0-9]/g, '');
-    return dbId === plainInputId && dbTel === plainInputContact;
+    const dbId = String(c.Id || '').replace(/[^0-9a-zA-Z]/g, '');
+    const dbCustCode = String(c.CustCode || '').replace(/[^0-9a-zA-Z]/g, '');
+    const dbTel = String(c.Tel || '').replace(/\D/g, '');
+    
+    const idMatches = (dbId === plainInputId || dbCustCode === plainInputId);
+    const telMatches = (
+      dbTel === plainInputContact ||
+      (dbTel.length >= 9 && plainInputContact.length >= 9 && (dbTel.endsWith(plainInputContact) || plainInputContact.endsWith(dbTel))) ||
+      (dbTel.includes(plainInputContact) && plainInputContact.length >= 8)
+    );
+    return idMatches && telMatches;
   });
   
   if (customer) {
