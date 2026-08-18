@@ -237,6 +237,50 @@ let db = {
   holidays: JSON.parse(localStorage.getItem('pawn_holidays')) || []
 };
 
+// ==================== AUTO-FETCH CLOUD DATA ON PAGE LOAD ====================
+// ดึงข้อมูลจริงจาก Cloudflare (KV/D1) มาอัปเดต localStorage ทุกครั้งที่เปิดหน้าเว็บ
+// เพื่อให้ login ใช้ข้อมูลลูกค้าจริงจาก MySQL ไม่ใช่ Mockup
+let _cloudDataReady = (async function autoFetchCloudData() {
+  try {
+    const res = await fetch('/api/sync?t=' + Date.now());
+    if (!res.ok) return;
+    const cloudData = await res.json();
+    
+    // อัปเดตเฉพาะเมื่อมีข้อมูลจริง (มากกว่า Mockup)
+    if (cloudData && cloudData.customers && cloudData.customers.length > 4) {
+      const tickets   = normalizeKeys(cloudData.tickets || []);
+      const customers = normalizeKeys(cloudData.customers || []);
+      const payments  = normalizeKeys(cloudData.payments  || []);
+      
+      // ตัดช่องว่างท้ายชื่อลูกค้า
+      customers.forEach(c => {
+        if (c.Name) c.Name = String(c.Name).replace(/\s+/g, ' ').trim();
+      });
+      
+      // อัปเดต db object ที่ใช้ทั้งหน้าเว็บ (รวมถึง Login)
+      db.tickets   = tickets;
+      db.customers = customers;
+      db.payments  = payments;
+      
+      // บันทึกลง localStorage ด้วย
+      localStorage.setItem('pawn_tickets',   JSON.stringify(tickets));
+      localStorage.setItem('pawn_customers', JSON.stringify(customers));
+      localStorage.setItem('pawn_payments',  JSON.stringify(payments));
+      
+      // อัปเดต config จาก Cloud (ถ้ามี)
+      if (cloudData.config && Object.keys(cloudData.config).length > 0) {
+        const merged = { ...db.config, ...cloudData.config };
+        db.config = merged;
+        localStorage.setItem('pawn_config', JSON.stringify(merged));
+      }
+      
+      console.log(`[Cloud Sync] โหลดข้อมูลจริงสำเร็จ: ${tickets.length} ตั๋ว, ${customers.length} ลูกค้า`);
+    }
+  } catch (e) {
+    console.log('[Cloud Sync] ไม่สามารถดึงข้อมูลจาก Cloud:', e.message);
+  }
+})();
+
 // Global padding utility
 function pad(num) {
   return String(num).padStart(2, '0');
@@ -381,14 +425,19 @@ if (loginIdInput) {
 }
 
 // ==================== 2. LOGIN AND OTP LOGIC ====================
-function handleLogin() {
+async function handleLogin() {
   const inputId = document.getElementById('login-id').value.trim();
   const inputContact = document.getElementById('login-contact').value.trim();
   const errorEl = document.getElementById('login-error-msg');
   
   errorEl.classList.add('hidden');
   
-  // 1. Search in Customer
+  // รอให้ข้อมูลจริงจาก Cloud โหลดเสร็จก่อน (ถ้ายังโหลดอยู่)
+  if (_cloudDataReady) {
+    try { await _cloudDataReady; } catch(e) {}
+  }
+  
+  // 1. Search in Customer (ใช้ Id = card_no 13 หลัก + Tel = เบอร์โทร)
   const plainInputId = inputId.replace(/[^0-9a-zA-Z]/g, '');
   const plainInputContact = inputContact.replace(/[^0-9]/g, '');
   
