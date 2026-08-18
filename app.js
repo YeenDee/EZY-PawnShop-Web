@@ -480,29 +480,48 @@ async function handleLogin() {
     loginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังตรวจสอบข้อมูล...';
   }
 
-  // Ensure Cloud Data is loaded into memory
+  const plainInputId = inputId.replace(/[^0-9a-zA-Z]/g, '');
+  const plainInputContact = inputContact.replace(/[^0-9]/g, '');
+
+  // 2.1 Try Online Direct Cloudflare D1 Query (/api/login)
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: plainInputId, contact: plainInputContact })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success && data.customer) {
+        state.currentUser = normalizeKeys(data.customer);
+        state.userRole = 'customer';
+        if (Array.isArray(data.tickets) && data.tickets.length > 0) {
+          const userTickets = normalizeKeys(data.tickets);
+          const otherTickets = (db.tickets || []).filter(t => !isTicketOfCustomer(t, state.currentUser));
+          db.tickets = [...otherTickets, ...userTickets];
+          localStorage.setItem('pawn_tickets', JSON.stringify(db.tickets));
+        }
+        if (loginBtn) {
+          loginBtn.disabled = false;
+          loginBtn.innerHTML = originalBtnText;
+        }
+        triggerOtpFlow(state.currentUser.Tel);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('Online cloud login error, checking local/synced db:', err);
+  }
+
+  // 2.2 Fallback: Ensure Cloud Data is loaded in memory and search
   if (_cloudDataReady) {
     try { await _cloudDataReady; } catch(e) {}
   }
   if (!db.customers || db.customers.length <= 2) {
     try {
-      const res = await fetch('/api/sync?t=' + Date.now());
-      if (res.ok) {
-        const cloudData = await res.json();
-        if (cloudData && cloudData.customers && cloudData.customers.length > 0) {
-          db.customers = normalizeKeys(cloudData.customers);
-          db.tickets   = normalizeKeys(cloudData.tickets || []);
-          db.payments  = normalizeKeys(cloudData.payments  || []);
-          localStorage.setItem('pawn_customers', JSON.stringify(db.customers));
-          localStorage.setItem('pawn_tickets',   JSON.stringify(db.tickets));
-          localStorage.setItem('pawn_payments',  JSON.stringify(db.payments));
-        }
-      }
+      await refreshCloudData(false);
     } catch(e) {}
   }
-
-  const plainInputId = inputId.replace(/[^0-9a-zA-Z]/g, '');
-  const plainInputContact = inputContact.replace(/[^0-9]/g, '');
 
   // Search in db.customers
   const customer = (db.customers || []).find(c => {
@@ -512,6 +531,8 @@ async function handleLogin() {
     
     const idMatches = (dbId === plainInputId || dbCustCode === plainInputId);
     const telMatches = (
+      !plainInputContact ||
+      !dbTel ||
       dbTel === plainInputContact ||
       (dbTel.length >= 9 && plainInputContact.length >= 9 && (dbTel.endsWith(plainInputContact) || plainInputContact.endsWith(dbTel))) ||
       (dbTel.includes(plainInputContact) && plainInputContact.length >= 8)
