@@ -430,37 +430,68 @@ async function handleLogin() {
   const inputId = document.getElementById('login-id').value.trim();
   const inputContact = document.getElementById('login-contact').value.trim();
   const errorEl = document.getElementById('login-error-msg');
+  const loginBtn = document.querySelector('#login-form button[type="submit"]');
+  const originalBtnText = loginBtn ? loginBtn.innerHTML : '';
   
   errorEl.classList.add('hidden');
-  
-  // รอให้ข้อมูลจริงจาก Cloud โหลดเสร็จก่อน (ถ้ายังโหลดอยู่)
-  if (_cloudDataReady) {
-    try { await _cloudDataReady; } catch(e) {}
+
+  // 1. First check if Admin / Staff
+  const plainId = inputId.replace(/-/g, ''); // UserID normalized
+  const user = db.users.find(u => {
+    const normalizedDbId = u.UserID.replace(/-/g, '');
+    return normalizedDbId === plainId && u.Password === inputContact;
+  });
+  if (user) {
+    state.currentUser = user;
+    state.userRole = 'admin';
+    triggerOtpFlow('System Admin SMS');
+    return;
   }
 
-  // ถ้ายังไม่มีข้อมูลลูกค้าใน db (เช่นเปิดครั้งแรก) ดึงตรงๆ จาก Cloudflare ทันที
-  if (!db.customers || db.customers.length <= 2) {
-    try {
-      const res = await fetch('/api/sync?t=' + Date.now());
-      if (res.ok) {
-        const cloudData = await res.json();
-        if (cloudData && cloudData.customers && cloudData.customers.length > 0) {
-          db.customers = normalizeKeys(cloudData.customers);
-          db.tickets   = normalizeKeys(cloudData.tickets || []);
-          db.payments  = normalizeKeys(cloudData.payments  || []);
-          localStorage.setItem('pawn_customers', JSON.stringify(db.customers));
-          localStorage.setItem('pawn_tickets',   JSON.stringify(db.tickets));
-          localStorage.setItem('pawn_payments',  JSON.stringify(db.payments));
-        }
-      }
-    } catch(e) {}
+  // 2. Customer Login via Real-Time Cloudflare D1 API
+  if (loginBtn) {
+    loginBtn.disabled = true;
+    loginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังตรวจสอบข้อมูล...';
   }
-  
-  // 1. Search in Customer (ใช้ Id = card_no 13 หลัก หรือ CustCode 15 หลัก + Tel = เบอร์โทร)
+
   const plainInputId = inputId.replace(/[^0-9a-zA-Z]/g, '');
   const plainInputContact = inputContact.replace(/[^0-9]/g, '');
-  
-  const customer = db.customers.find(c => {
+
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: plainInputId, contact: plainInputContact })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success && data.customer) {
+        state.currentUser = normalizeKeys(data.customer);
+        state.userRole = 'customer';
+        
+        // บันทึกตั๋วเฉพาะของลูกค้ารายนี้ลงใน db.tickets
+        if (Array.isArray(data.tickets) && data.tickets.length > 0) {
+          const userTickets = normalizeKeys(data.tickets);
+          const otherTickets = (db.tickets || []).filter(t => !isTicketOfCustomer(t, state.currentUser));
+          db.tickets = [...otherTickets, ...userTickets];
+          saveDBTable('tickets');
+        }
+
+        if (loginBtn) {
+          loginBtn.disabled = false;
+          loginBtn.innerHTML = originalBtnText;
+        }
+        triggerOtpFlow(state.currentUser.Tel);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('Online cloud login error, checking local db:', err);
+  }
+
+  // 3. Fallback: Search in local memory db.customers
+  const customer = (db.customers || []).find(c => {
     const dbId = String(c.Id || '').replace(/[^0-9a-zA-Z]/g, '');
     const dbCustCode = String(c.CustCode || '').replace(/[^0-9a-zA-Z]/g, '');
     const dbTel = String(c.Tel || '').replace(/\D/g, '');
@@ -473,29 +504,20 @@ async function handleLogin() {
     );
     return idMatches && telMatches;
   });
-  
+
+  if (loginBtn) {
+    loginBtn.disabled = false;
+    loginBtn.innerHTML = originalBtnText;
+  }
+
   if (customer) {
     state.currentUser = customer;
     state.userRole = 'customer';
     triggerOtpFlow(customer.Tel);
     return;
   }
-  
-  // 2. Search in Admin/User
-  // Translate inputId directly as UserID, and inputContact as Password
-  const plainId = inputId.replace(/-/g, ''); // UserID normalized
-  const user = db.users.find(u => {
-    const normalizedDbId = u.UserID.replace(/-/g, '');
-    return normalizedDbId === plainId && u.Password === inputContact;
-  });
-  if (user) {
-    state.currentUser = user;
-    state.userRole = 'admin';
-    triggerOtpFlow('System Admin SMS');
-    return;
-  }
-  
-  // 3. Not found, show spec warning message
+
+  // 4. Not found, show spec warning message
   errorEl.innerText = '* ไม่พบข้อมูลลูกค้าในระบบ กรุณาติดต่อโรงรับจำนำฯ ใน วัน - เวลาทำการ  จ.-ศ. 09.00 – 15.00 น.';
   errorEl.classList.remove('hidden');
 }
