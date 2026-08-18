@@ -1232,40 +1232,40 @@ body.admin-mode.sidebar-collapsed .admin-viewport {
 
 /* Bank brand theme card variants */
 .bank-info-card.bank-kbank {
-  background-color: #e8f5e9 !important; /* Light green */
-  border-left: 5px solid #2e7d32 !important;
-  border-color: #2e7d32 !important;
+  background-color: #e8f5e9; /* Light green */
+  border-left: 5px solid #2e7d32;
+  border-color: #2e7d32;
 }
 .bank-info-card.bank-kbank .bank-logo {
-  background-color: #2e7d32 !important;
-  color: white !important;
+  background-color: #2e7d32;
+  color: white;
 }
 .bank-info-card.bank-scb {
-  background-color: #f3e5f5 !important; /* Light purple */
-  border-left: 5px solid #7b1fa2 !important;
-  border-color: #7b1fa2 !important;
+  background-color: #f3e5f5; /* Light purple */
+  border-left: 5px solid #7b1fa2;
+  border-color: #7b1fa2;
 }
 .bank-info-card.bank-scb .bank-logo {
-  background-color: #7b1fa2 !important;
-  color: white !important;
+  background-color: #7b1fa2;
+  color: white;
 }
 .bank-info-card.bank-bbl {
-  background-color: #e8eaf6 !important; /* Light indigo */
-  border-left: 5px solid #1a237e !important;
-  border-color: #1a237e !important;
+  background-color: #e8eaf6; /* Light indigo */
+  border-left: 5px solid #1a237e;
+  border-color: #1a237e;
 }
 .bank-info-card.bank-bbl .bank-logo {
-  background-color: #1a237e !important;
-  color: white !important;
+  background-color: #1a237e;
+  color: white;
 }
 .bank-info-card.bank-ktb {
-  background-color: #e0f7fa !important; /* Light cyan */
-  border-left: 5px solid #0097a7 !important;
-  border-color: #0097a7 !important;
+  background-color: #e0f7fa; /* Light cyan */
+  border-left: 5px solid #0097a7;
+  border-color: #0097a7;
 }
 .bank-info-card.bank-ktb .bank-logo {
-  background-color: #0097a7 !important;
-  color: white !important;
+  background-color: #0097a7;
+  color: white;
 }
 
 /* Print-Only Report elements */

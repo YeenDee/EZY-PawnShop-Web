@@ -685,6 +685,7 @@ function switchCustomerTab(tabName, navItem) {
     renderCustomerTickets();
   } else if (tabName === 'pay') {
     renderCustomerPayInterest();
+    applyBankSettingsToUI();
   }
 }
 
@@ -1281,17 +1282,46 @@ function submitPayment() {
     }
   });
   
-  // Save tables locally and sync to Cloudflare
+  // Save tables locally and sync to Cloudflare immediately
   saveDBTable('tickets');
   saveDBTable('payments');
   
-  alert(`✅ ส่งข้อมูลหลักฐานเรียบร้อยแล้ว!\nรหัสรับชำระ: ${billNo}\n\nระบบได้ส่งข้อมูลหลักฐานไปยังโรงรับจำนำเรียบร้อยแล้ว อยู่ระหว่างเจ้าหน้าที่ตรวจสอบ`);
+  // Trigger In-App Payment Success Modal
+  const billNoEl = document.getElementById('success-modal-bill-no');
+  if (billNoEl) billNoEl.innerText = billNo;
   
-  // Reset payment states & return
+  const successModal = document.getElementById('payment-success-modal');
+  if (successModal) {
+    successModal.classList.add('active');
+  } else {
+    alert(`✅ ส่งข้อมูลหลักฐานเรียบร้อยแล้ว!\nรหัสรับชำระ: ${billNo}\n\nระบบได้ส่งข้อมูลหลักฐานไปยังโรงรับจำนำเรียบร้อยแล้ว อยู่ระหว่างเจ้าหน้าที่ตรวจสอบ`);
+    closePaymentSuccessModal();
+  }
+}
+
+function closePaymentSuccessModal() {
+  const successModal = document.getElementById('payment-success-modal');
+  if (successModal) successModal.classList.remove('active');
+  
+  // Reset payment states
   state.selectedTickets = [];
   state.selectedSlipBase64 = '';
   state.selectedPaymentDateTime = '';
   
+  // Reset preview UI
+  const previewImg = document.getElementById('slip-preview');
+  if (previewImg) {
+    previewImg.src = '';
+    previewImg.classList.add('hidden');
+  }
+  const placeholderIcon = document.getElementById('slip-placeholder-icon');
+  if (placeholderIcon) placeholderIcon.classList.remove('hidden');
+  const placeholderText = document.getElementById('slip-placeholder-text');
+  if (placeholderText) placeholderText.innerText = 'กดเพื่อ เลือกรูปภาพ หรือ ถ่ายภาพสลิป';
+  const dtText = document.getElementById('payment-datetime-text');
+  if (dtText) dtText.innerText = 'เลือก วันที่ และ เวลาชำระเงิน';
+  
+  // Switch to "ตั๋วจำนำ" tab immediately with yellow pending badge
   switchCustomerTab('tickets', document.querySelectorAll('.bottom-nav .nav-item')[1]);
 }
 
@@ -2465,7 +2495,16 @@ function renderAdminSettings() {
 }
 
 function applyBankSettingsToUI() {
-  const cfg = db.config || {};
+  // Always read latest config from localStorage or memory
+  let cfg = db.config;
+  try {
+    const raw = localStorage.getItem('pawn_config');
+    if (raw) {
+      cfg = JSON.parse(raw);
+      db.config = cfg;
+    }
+  } catch(e) {}
+  if (!cfg) cfg = {};
   
   // 1. Bank Name
   const nameEl = document.getElementById('cfg-bank-name');
@@ -2479,13 +2518,26 @@ function applyBankSettingsToUI() {
   const accNameEl = document.getElementById('cfg-bank-acc-name');
   if (accNameEl) accNameEl.innerText = cfg.bank_acc_name || 'บจ. อีซี่ โรงรับจำนำ 2006';
 
-  // 4. Custom Color
-  const customColor = cfg.bank_color || '#178e3d';
+  // 4. Smart Bank Color Detection
+  let customColor = cfg.bank_color || '';
+  const bankNameStr = String(cfg.bank_name || '').toLowerCase();
+  const bankLogoStr = String(cfg.bank_logo || '').toUpperCase();
+  
+  if (!customColor || customColor === '#178e3d') {
+    if (bankLogoStr.includes('KTB') || bankNameStr.includes('กรุงไทย')) customColor = '#00a5e5';
+    else if (bankLogoStr.includes('SCB') || bankNameStr.includes('ไทยพาณิชย์')) customColor = '#4e2a84';
+    else if (bankLogoStr.includes('BBL') || bankNameStr.includes('กรุงเทพ')) customColor = '#1e4598';
+    else if (bankLogoStr.includes('BAY') || bankNameStr.includes('กรุงศรี')) customColor = '#fec43b';
+    else if (bankLogoStr.includes('TTB') || bankNameStr.includes('ทหารไทย')) customColor = '#002d63';
+    else if (bankLogoStr.includes('GSB') || bankNameStr.includes('ออมสิน')) customColor = '#eb1985';
+    else if (bankLogoStr.includes('KB') || bankNameStr.includes('กสิกร')) customColor = '#178e3d';
+    else customColor = cfg.bank_color || '#178e3d';
+  }
 
-  // 5. Bank Logo
+  // 5. Bank Logo (Image or Text)
   const logoEl = document.getElementById('cfg-bank-logo');
   const logoVal = String(cfg.bank_logo || 'KB').trim();
-  const isImagePath = /\.(jpg|jpeg|png|gif|ico)$/i.test(logoVal) || logoVal.includes('\\') || logoVal.includes('/') || logoVal.startsWith('data:') || logoVal.startsWith('http');
+  const isImagePath = /\.(jpg|jpeg|png|gif|ico|webp)$/i.test(logoVal) || logoVal.includes('\\') || logoVal.includes('/') || logoVal.startsWith('data:') || logoVal.startsWith('http');
   
   if (logoEl) {
     if (isImagePath) {
@@ -2494,22 +2546,26 @@ function applyBankSettingsToUI() {
         const parts = srcVal.split(/[\\/]/);
         srcVal = parts[parts.length - 1];
       }
-      logoEl.innerHTML = `<img src="${srcVal}" alt="Bank Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;">`;
+      logoEl.innerHTML = `<img src="${srcVal}" alt="Bank Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%; display: block;" onerror="this.onerror=null; this.parentNode.innerText='${logoVal.substring(0,4)}'; this.parentNode.style.backgroundColor='${customColor}'; this.parentNode.style.color='#ffffff';">`;
       logoEl.style.setProperty('padding', '0', 'important');
-      logoEl.style.setProperty('background', 'none', 'important');
+      logoEl.style.setProperty('background', 'transparent', 'important');
+      logoEl.style.setProperty('border', '1px solid ' + customColor, 'important');
     } else {
       logoEl.innerText = logoVal || 'KB';
       logoEl.style.setProperty('padding', '', '');
       logoEl.style.setProperty('background-color', customColor, 'important');
       logoEl.style.setProperty('color', '#ffffff', 'important');
+      logoEl.style.setProperty('font-weight', '800', 'important');
+      logoEl.style.setProperty('border', 'none', 'important');
     }
   }
 
-  // 6. Bank Card Styling (border, background)
+  // 6. Bank Card Styling (border, background tint)
   const bankCard = document.querySelector('.bank-info-card');
   if (bankCard) {
-    bankCard.style.setProperty('background-color', customColor + '15', 'important'); // 15% transparency
-    bankCard.style.setProperty('border-left', '5px solid ' + customColor, 'important');
+    bankCard.className = 'bank-info-card'; // reset classes
+    bankCard.style.setProperty('background-color', customColor + '18', 'important'); // 18% opacity tint
+    bankCard.style.setProperty('border-left', '6px solid ' + customColor, 'important');
     bankCard.style.setProperty('border-color', customColor, 'important');
   }
 
