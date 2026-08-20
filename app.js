@@ -292,6 +292,8 @@ async function refreshCloudData(forceRender = true) {
       db.config = { ...db.config, ...cloudData.config };
       localStorage.setItem('pawn_config', JSON.stringify(db.config));
       applyBankSettingsToUI();
+    } else {
+      loadLiveBankConfig();
     }
     
     console.log(`[Cloud Sync] ซิงค์ข้อมูลล่าสุดสำเร็จ: ${db.tickets.length} ตั๋ว, ${db.customers.length} ลูกค้า, ${db.payments.length} การชำระ`);
@@ -391,17 +393,33 @@ async function syncCurrentStateToCloud(table = null) {
 }
 
 async function loadLiveBankConfig() {
+  let cfg = null;
+  // 1. Try /api/config
   try {
     const res = await fetch('/api/config?t=' + Date.now());
     if (res.ok) {
       const data = await res.json();
       if (data && data.config && Object.keys(data.config).length > 0) {
-        db.config = { ...db.config, ...data.config };
-        localStorage.setItem('pawn_config', JSON.stringify(db.config));
-        applyBankSettingsToUI();
+        cfg = data.config;
       }
     }
   } catch(e) {}
+
+  // 2. Try /pawn_config.json
+  if (!cfg) {
+    try {
+      const res2 = await fetch('/pawn_config.json?t=' + Date.now());
+      if (res2.ok) {
+        cfg = await res2.json();
+      }
+    } catch(e) {}
+  }
+
+  if (cfg && typeof cfg === 'object') {
+    db.config = { ...db.config, ...cfg };
+    localStorage.setItem('pawn_config', JSON.stringify(db.config));
+    applyBankSettingsToUI();
+  }
 }
 
 let state = {
