@@ -356,28 +356,52 @@ if (db.config) {
 function saveDBTable(table) {
   localStorage.setItem('pawn_' + table, JSON.stringify(db[table]));
   if (table === 'tickets' || table === 'payments' || table === 'customers' || table === 'config') {
-    syncCurrentStateToCloud();
+    syncCurrentStateToCloud(table);
   }
 }
 
-async function syncCurrentStateToCloud() {
+async function syncCurrentStateToCloud(table = null) {
   try {
-    const payload = {
-      customers: db.customers,
-      tickets: db.tickets,
-      payments: db.payments,
-      config: db.config,
-      sync_time: new Date().toISOString()
-    };
+    let payload = {};
+    if (table === 'payments') {
+      payload = { payments: db.payments, sync_time: new Date().toISOString() };
+    } else if (table === 'config') {
+      payload = { config: db.config, sync_time: new Date().toISOString() };
+    } else if (table === 'tickets') {
+      const modifiedTickets = (db.tickets || []).filter(t => t.BillType === '9' || t.BillType === '2');
+      payload = { tickets: modifiedTickets, sync_time: new Date().toISOString() };
+    } else {
+      payload = {
+        payments: db.payments,
+        config: db.config,
+        tickets: (db.tickets || []).filter(t => t.BillType === '9' || t.BillType === '2'),
+        sync_time: new Date().toISOString()
+      };
+    }
+
     await fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    console.log('[Cloud D1 Sync] Auto-saved to Cloudflare D1 SQL & KV (incl. config)');
+    console.log('[Cloud D1 Sync] Auto-saved to Cloudflare for table:', table || 'all');
   } catch (e) {
-    console.log('[Cloud D1 Sync] Offline mode');
+    console.log('[Cloud D1 Sync] Offline mode:', e.message);
   }
+}
+
+async function loadLiveBankConfig() {
+  try {
+    const res = await fetch('/api/config?t=' + Date.now());
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.config && Object.keys(data.config).length > 0) {
+        db.config = { ...db.config, ...data.config };
+        localStorage.setItem('pawn_config', JSON.stringify(db.config));
+        applyBankSettingsToUI();
+      }
+    }
+  } catch(e) {}
 }
 
 let state = {
@@ -1054,8 +1078,11 @@ function showPaymentDetailsScreen() {
   document.getElementById('pay-select-tickets-view').classList.add('hidden');
   document.getElementById('pay-details-screen').classList.remove('hidden');
   
-  // Render Bank Config & Styles dynamically
+  // Render Bank Config & Styles immediately from storage
   applyBankSettingsToUI();
+  
+  // Load latest live bank config from Cloudflare in parallel
+  loadLiveBankConfig();
   
   // Summarize payment values
   const count = state.selectedTickets.length;
@@ -1282,9 +1309,28 @@ function submitPayment() {
     }
   });
   
-  // Save tables locally and sync to Cloudflare immediately
-  saveDBTable('tickets');
-  saveDBTable('payments');
+  // Save tables locally
+  localStorage.setItem('pawn_tickets', JSON.stringify(db.tickets));
+  localStorage.setItem('pawn_payments', JSON.stringify(db.payments));
+
+  // Sync to Cloudflare immediately (fast lightweight payload ~50KB)
+  const submittedTickets = state.selectedTickets.map(item => {
+    return db.tickets.find(t => Number(t.DocNo) === Number(item.docNo) && Number(t.BookNo) === Number(item.bookNo));
+  }).filter(Boolean);
+  const newPayments = db.payments.filter(p => p.BillNo === billNo);
+
+  try {
+    fetch('/api/payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payment: newPayments[0], payments: newPayments, ticket: submittedTickets[0], tickets: submittedTickets })
+    });
+    fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payments: newPayments, tickets: submittedTickets })
+    });
+  } catch(e) {}
   
   // Trigger In-App Payment Success Modal
   const billNoEl = document.getElementById('success-modal-bill-no');
@@ -2591,8 +2637,22 @@ function saveBankSettings() {
   db.config.bank_color = color;
   db.config.system_id = systemId;
   
-  saveDBTable('config');
+  localStorage.setItem('pawn_config', JSON.stringify(db.config));
   applyBankSettingsToUI();
+
+  // Send config immediately to Cloudflare /api/config & /api/sync
+  try {
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: db.config })
+    });
+    fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: db.config })
+    });
+  } catch(e) {}
   
   alert('บันทึกข้อมูลตั้งค่าระบบเรียบร้อยแล้ว!');
 }
