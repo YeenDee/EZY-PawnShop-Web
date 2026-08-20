@@ -112,10 +112,10 @@ const DEFAULT_PAYMENTS = [
 const DEFAULT_CONFIG = {
   shop_name: 'โรงรับจำนำ อีซี่ Pawnshop 2006',
   bank_name: 'ธนาคารกสิกรไทย',
-  bank_logo: 'KB',
+  bank_logo: 'Logobank-kb.jpg',
   bank_color: '#178e3d',
   bank_acc: '026-8-91256-0',
-  bank_acc_name: 'บจก. อีซี่ โรงรับจำนำ 2006',
+  bank_acc_name: 'บจ. อีซี่ โรงรับจำนำ 2006',
   system_id: 3
 };
 

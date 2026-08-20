@@ -204,15 +204,17 @@
             <div class="card card-red-border" style="margin-bottom: 0;">
               <h3 style="font-size: 16px; margin-bottom: 12px; color: var(--primary-red);"><i class="fa-solid fa-wallet"></i> บัญชีธนาคารสำหรับโอนเงิน</h3>
               
-              <div class="bank-info-card">
-                <div class="bank-logo" id="cfg-bank-logo">KB</div>
+              <div class="bank-info-card" style="background-color: rgba(23, 142, 61, 0.08); border-left: 6px solid #178e3d; border-color: #178e3d;">
+                <div class="bank-logo" id="cfg-bank-logo" style="padding: 0; background: transparent; border: 1px solid #178e3d;">
+                  <img src="Logobank-kb.jpg" alt="Bank Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%; display: block;" onerror="this.onerror=null; this.parentNode.innerText='KB'; this.parentNode.style.backgroundColor='#178e3d'; this.parentNode.style.color='#ffffff';">
+                </div>
                 <div class="bank-details">
                   <h4 id="cfg-bank-name">ธนาคารกสิกรไทย</h4>
                   <div style="display: flex; align-items: center; gap: 8px; margin: 4px 0;">
-                    <span class="bank-acc-no number" id="cfg-bank-acc">123-4-56789-0</span>
+                    <span class="bank-acc-no number" id="cfg-bank-acc" style="color: #178e3d;">026-8-91256-0</span>
                     <button class="copy-btn" onclick="copyBankAccount()" title="คัดลอกเลขบัญชี"><i class="fa-regular fa-copy"></i></button>
                   </div>
-                  <p>ชื่อบัญชี: <strong id="cfg-bank-acc-name">บจก. อีซี่ โรงรับจำนำ 2006</strong></p>
+                  <p>ชื่อบัญชี: <strong id="cfg-bank-acc-name">บจ. อีซี่ โรงรับจำนำ 2006</strong></p>
                 </div>
               </div>
             </div>
