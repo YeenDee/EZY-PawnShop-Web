@@ -325,8 +325,9 @@
         <div class="admin-sidebar-header">
           <img src="Logo.ico" alt="Logo">
           <div>
-            <h2 id="admin-sidebar-shop-name" style="font-size: 16px; margin: 0; color: var(--primary-red); font-weight: 700;">EZY Pawnshop 2006</h2>
-            <p style="font-size: 11px; color: var(--accent-gold); margin-top: 4px; font-weight: 600;">ผู้ใช้ - <span id="admin-sidebar-user-name">Admin</span></p>
+            <h2 id="admin-sidebar-shop-name" style="font-size: 15px; margin: 0; color: var(--primary-red); font-weight: 700;">EZY Pawnshop 2006</h2>
+            <p style="font-size: 10px; color: var(--text-medium); margin-top: 2px; font-weight: 600; letter-spacing: 0.3px;">WEB APPLICATION PORTAL Version 1.0</p>
+            <p style="font-size: 11px; color: var(--accent-gold); margin-top: 2px; font-weight: 600;">ผู้ใช้ - <span id="admin-sidebar-user-name">Admin</span></p>
           </div>
         </div>
         <nav class="admin-nav">
@@ -356,7 +357,7 @@
           </div>
           <div class="admin-nav-item" onclick="switchAdminScreen('settings', this)">
             <i class="fa-solid fa-sliders"></i>
-            <span>ตั้งค่าระบบ</span>
+            <span>ตั้งค่าการทำงานและฐานข้อมูลระบบ</span>
           </div>
           <div class="admin-nav-item" onclick="switchAdminScreen('help', this)">
             <i class="fa-solid fa-circle-info"></i>
@@ -706,7 +707,7 @@
           </div>
         </div>
         
-        <!-- SCREEN 8: ตั้งค่าระบบ (System Settings) -->
+        <!-- SCREEN 8: ตั้งค่าการทำงานและฐานข้อมูลระบบ (System Settings) -->
         <div id="scr-settings" class="admin-screen hidden fade-in-el">
           
           <!-- Column Grid -->
@@ -714,9 +715,12 @@
             
             <!-- Left panel: System Settings -->
             <div class="card">
-              <h3 style="font-size: 16px; margin-bottom: 20px; color: var(--primary-red); border-bottom: 1px solid var(--border-light); padding-bottom: 10px;">
-                <i class="fa-solid fa-gear"></i> 1. ตั้งค่าระบบ
-              </h3>
+              <div class="flex-row-between" style="border-bottom: 1px solid var(--border-light); padding-bottom: 10px; margin-bottom: 20px;">
+                <h3 style="font-size: 16px; margin: 0; color: var(--primary-red);">
+                  <i class="fa-solid fa-gear"></i> ตั้งค่าการทำงานและฐานข้อมูลระบบ
+                </h3>
+                <span style="font-size: 12px; color: var(--primary-red); font-weight: 700; background: var(--bg-light); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-light);">WEB APPLICATION PORTAL Version 1.0</span>
+              </div>
               <form id="bank-settings-form" onsubmit="event.preventDefault(); saveBankSettings();">
                 <div class="form-group">
                   <label for="cfg-edit-shop-name">ชื่อร้าน</label>

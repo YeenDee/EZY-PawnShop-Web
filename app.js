@@ -2672,7 +2672,7 @@ function saveBankSettings() {
     });
   } catch(e) {}
   
-  alert('บันทึกข้อมูลตั้งค่าระบบเรียบร้อยแล้ว!');
+  alert('✅ บันทึกข้อมูลตั้งค่าการทำงานและฐานข้อมูลระบบสำเร็จ!\nอัปเดตไฟล์ pawn_config.json บนระบบเรียบร้อยแล้ว\n"WEB APPLICATION PORTAL " Version 1.0');
 }
 
 function renderAdminPositions() {
