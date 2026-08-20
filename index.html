@@ -29,7 +29,7 @@
       <div class="login-logo-container">
         <img src="Logo.ico" alt="EZY Pawnshop Logo">
         <h2>EZY PAWNSHOP 2006</h2>
-        <p>WEB APPLICATION PORTAL</p>
+        <p>WEB APPLICATION PORTAL Version 1.0</p>
       </div>
       
       <form id="login-form" onsubmit="event.preventDefault(); handleLogin();">
@@ -326,7 +326,6 @@
           <img src="Logo.ico" alt="Logo">
           <div>
             <h2 id="admin-sidebar-shop-name" style="font-size: 15px; margin: 0; color: var(--primary-red); font-weight: 700;">EZY Pawnshop 2006</h2>
-            <p style="font-size: 10px; color: var(--text-medium); margin-top: 2px; font-weight: 600; letter-spacing: 0.3px;">WEB APPLICATION PORTAL Version 1.0</p>
             <p style="font-size: 11px; color: var(--accent-gold); margin-top: 2px; font-weight: 600;">ผู้ใช้ - <span id="admin-sidebar-user-name">Admin</span></p>
           </div>
         </div>
@@ -357,7 +356,7 @@
           </div>
           <div class="admin-nav-item" onclick="switchAdminScreen('settings', this)">
             <i class="fa-solid fa-sliders"></i>
-            <span>ตั้งค่าการทำงานและฐานข้อมูลระบบ</span>
+            <span>ตั้งค่า</span>
           </div>
           <div class="admin-nav-item" onclick="switchAdminScreen('help', this)">
             <i class="fa-solid fa-circle-info"></i>
@@ -719,7 +718,7 @@
                 <h3 style="font-size: 16px; margin: 0; color: var(--primary-red);">
                   <i class="fa-solid fa-gear"></i> ตั้งค่าการทำงานและฐานข้อมูลระบบ
                 </h3>
-                <span style="font-size: 12px; color: var(--primary-red); font-weight: 700; background: var(--bg-light); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-light);">WEB APPLICATION PORTAL Version 1.0</span>
+                <!-- <span style="font-size: 12px; color: var(--primary-red); font-weight: 700; background: var(--bg-light); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-light);">WEB APPLICATION PORTAL Version 1.0</span>  -->
               </div>
               <form id="bank-settings-form" onsubmit="event.preventDefault(); saveBankSettings();">
                 <div class="form-group">
@@ -946,6 +945,6 @@
   </div>
 
   <!-- JavaScript Logics -->
-  <script src="app.js?v=42"></script>
+  <script src="app.js?v=45"></script>
 </body>
 </html>
