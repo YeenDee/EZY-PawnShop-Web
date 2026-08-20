@@ -2638,7 +2638,7 @@ function applyBankSettingsToUI() {
   if (sidebarShopEl && cfg.shop_name) sidebarShopEl.innerText = cfg.shop_name;
 }
 
-function saveBankSettings() {
+async function saveBankSettings() {
   const shopName = document.getElementById('cfg-edit-shop-name').value.trim();
   const logo = document.getElementById('cfg-edit-bank-logo').value.trim();
   const name = document.getElementById('cfg-edit-bank-name').value.trim();
@@ -2655,24 +2655,92 @@ function saveBankSettings() {
   db.config.bank_color = color;
   db.config.system_id = systemId;
   
+  // 1. บันทึกลงในเครื่อง (LocalStorage) และอัปเดต UI ทันที
   localStorage.setItem('pawn_config', JSON.stringify(db.config));
   applyBankSettingsToUI();
-
-  // Send config immediately to Cloudflare /api/config & /api/sync
-  try {
-    fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config: db.config })
-    });
-    fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config: db.config })
-    });
-  } catch(e) {}
   
-  alert('✅ บันทึกข้อมูลตั้งค่าการทำงานและฐานข้อมูลระบบสำเร็จ!\nอัปเดตไฟล์ pawn_config.json บนระบบเรียบร้อยแล้ว\n"WEB APPLICATION PORTAL " Version 1.0');
+  // 2. แสดงสถานะกำลังบันทึกที่ปุ่ม
+  const submitBtn = document.querySelector('#bank-settings-form button[type="submit"]');
+  const origBtnHtml = submitBtn ? submitBtn.innerHTML : '';
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังบันทึกข้อมูลขึ้น Cloudflare...';
+  }
+  
+  // 3. ตรวจสอบการบันทึกขึ้น Cloudflare ว่าสำเร็จหรือไม่
+  let cloudSuccess = false;
+  let cloudErrMsg = '';
+  
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s Timeout
+    
+    // ลองส่งไปยัง /api/config
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: db.config }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    
+    const contentType = res.headers.get('content-type') || '';
+    if (res.ok && contentType.includes('application/json')) {
+      const resData = await res.json();
+      if (resData && resData.success !== false) {
+        cloudSuccess = true;
+      } else {
+        cloudErrMsg = resData.error || resData.message || 'Cloudflare ปฏิเสธคำขอ';
+      }
+    } else if (res.ok) {
+      // ตอบกลับ 200 OK
+      cloudSuccess = true;
+    } else {
+      // หาก /api/config ไม่ตอบสนอง ลองส่งผ่าน /api/sync สำรอง
+      const controllerSync = new AbortController();
+      const timeoutSyncId = setTimeout(() => controllerSync.abort(), 10000);
+      const resSync = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: db.config }),
+        signal: controllerSync.signal
+      });
+      clearTimeout(timeoutSyncId);
+      
+      const syncContentType = resSync.headers.get('content-type') || '';
+      if (resSync.ok && syncContentType.includes('application/json')) {
+        const syncData = await resSync.json();
+        if (syncData && syncData.success !== false) {
+          cloudSuccess = true;
+        } else {
+          cloudErrMsg = syncData.error || 'สถานะตอบกลับ: ' + resSync.status;
+        }
+      } else if (resSync.ok) {
+        cloudSuccess = true;
+      } else {
+        cloudErrMsg = `HTTP Status: ${res.status} (${res.statusText || 'Error'})`;
+      }
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      cloudErrMsg = 'หมดเวลาการเชื่อมต่อ (Request Timeout 10s) กรุณาตรวจสอบอินเทอร์เน็ต';
+    } else {
+      cloudErrMsg = err.message || 'ไม่สามารถติดต่อ Cloudflare Server ได้';
+    }
+  } finally {
+    // คืนสถานะปุ่มบันทึก
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = origBtnHtml || '<i class="fa-solid fa-floppy-disk"></i> บันทึกข้อมูลตั้งค่าระบบ';
+    }
+  }
+  
+  // 4. แจ้งเตือนผลลัพธ์การบันทึกอย่างชัดเจน
+  if (cloudSuccess) {
+    alert('✅ บันทึกข้อมูลตั้งค่าการทำงานและฐานข้อมูลระบบขึ้น Cloudflare สำเร็จ!\n\nอัปเดตไฟล์ pawn_config.json บนระบบเรียบร้อยแล้ว\n"WEB APPLICATION PORTAL " Version 1.0');
+  } else {
+    alert(`❌ บันทึกข้อมูลขึ้น Cloudflare ไม่สำเร็จ!\nสาเหตุ: ${cloudErrMsg}\n\n(ระบบได้บันทึกค่าลงในเบราว์เซอร์นี้ไว้เรียบร้อยแล้ว กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตหรือ Cloudflare อีกครั้ง)\n"WEB APPLICATION PORTAL " Version 1.0`);
+  }
 }
 
 function renderAdminPositions() {
