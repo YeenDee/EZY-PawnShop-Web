@@ -430,6 +430,15 @@ def run_db_sync(mock_mode=False):
         "customers": customers_data,
         "tickets": tickets_data,
         "payments": payments_data,
+        "config": {
+            "shop_name": "โรงรับจำนำ อีซี่ Pawnshop 2006",
+            "bank_name": "ธนาคารกสิกรไทย",
+            "bank_logo": "KB",
+            "bank_color": "#178e3d",
+            "bank_acc": "026-8-91256-0",
+            "bank_acc_name": "บ. อีซี่ โรงรับจำนำ 2006",
+            "system_id": 3
+        },
         "mode": "mock" if mock_mode else "production"
     }
     
