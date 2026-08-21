@@ -1,0 +1,29 @@
+#178e3d     เขียว  กสิกร
+#EF3C97     ชมพู   ออมสิน
+#2CC3F1     ฟ้า  กรุงไทย
+
+คำแนะนำที่ดีที่สุด (Best Practice): "ต้องแก้ไขและทดสอบที่ Local ก่อนเสมอครับ" เมื่อแน่ใจว่าโปรแกรมไม่พังและทำงานได้ถูกต้อง จึงค่อยทำการอัปเดต (Redeploy) ขึ้น Cloudflare
+
+วิธีการอัปเดตระบบสามารถทำได้ 2 รูปแบบตามวิธีการ Deploy ที่เลือกใช้:
+
+กรณีเชื่อมต่อผ่าน GitHub (แนะนำที่สุด - Cloudflare Pages):
+	เมื่อต้องการแก้โค้ด ให้แก้ไขและตรวจสอบความถูกต้องในเครื่อง Local จากนั้นพิมพ์คำสั่ง git commit และ git push โค้ดขึ้นไปที่ GitHub
+Cloudflare จะจับตาความเปลี่ยนแปลงบน GitHub แล้วดึงโค้ดไปประกอบร่างและอัปเดตขึ้นหน้าเว็บจริงให้คุณโดยอัตโนมัติ (CI/CD) ภายในเวลา 1-2 นาที
+โดยไม่จำเป็นต้องเข้าไปกดอะไรในเว็บ Cloudflare เลยครับ
+
+กรณี Deploy ผ่าน Wrangler CLI (ไม่ผ่าน GitHub):
+	แก้ไขไฟล์ในเครื่อง Local ให้เรียบร้อย ใช้คำสั่งเทอร์มินัล: npx wrangler pages deploy ./ (หรือระบุโฟลเดอร์ปลายทาง) เพื่อสั่งอัปโหลดไฟล์ที่แก้ไขล่าสุด
+ จากเครื่องของคุณตรงเข้าระบบ Cloudflare หน้าเว็บจริงจะเปลี่ยนตามไฟล์ใหม่ทันที
+
+ezy-pawnshop-web.pages.dev
+ezy-pawnshop2006.rainbow-ocean.site
+
+Cloudflare Token  : (Stored in option.ini)
+account id : 17bdd980316fec191fd0597e89d5afe9
+d1 database : e2e13521-f66b-4fef-8542-c7d97da9311a
+namespace id : cfdeabd671c94f9bafdbba5b1c41316f
+S3 API : https://17bdd980316fec191fd0597e89d5afe9.r2.cloudflarestorage.com/ezy-pawnshop-backups
+
+mysql -h localhost -u pawnshop_eps -p
+python db_sync.py sync
+https://ezy-pawnshop-web.pages.dev/api/sync

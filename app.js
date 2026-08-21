@@ -2737,9 +2737,9 @@ async function saveBankSettings() {
   
   // 4. แจ้งเตือนผลลัพธ์การบันทึกอย่างชัดเจน
   if (cloudSuccess) {
-    alert('✅ บันทึกข้อมูลตั้งค่าการทำงานและฐานข้อมูลระบบขึ้น Cloudflare สำเร็จ!\n\nอัปเดตไฟล์ pawn_config.json บนระบบเรียบร้อยแล้ว\n"WEB APPLICATION PORTAL " Version 1.0');
+    alert('✅ บันทึกข้อมูลตั้งค่าการทำงานและฐานข้อมูลระบบขึ้น Cloudflare สำเร็จ!\n\nอัปเดตไฟล์ pawn_config.json บนระบบเรียบร้อยแล้ว\n');
   } else {
-    alert(`❌ บันทึกข้อมูลขึ้น Cloudflare ไม่สำเร็จ!\nสาเหตุ: ${cloudErrMsg}\n\n(ระบบได้บันทึกค่าลงในเบราว์เซอร์นี้ไว้เรียบร้อยแล้ว กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตหรือ Cloudflare อีกครั้ง)\n"WEB APPLICATION PORTAL " Version 1.0`);
+    alert(`❌ บันทึกข้อมูลขึ้น Cloudflare ไม่สำเร็จ!\nสาเหตุ: ${cloudErrMsg}\n\n(ระบบได้บันทึกค่าลงในเบราว์เซอร์นี้ไว้เรียบร้อยแล้ว กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตหรือ Cloudflare อีกครั้ง)\n`);
   }
 }
 
