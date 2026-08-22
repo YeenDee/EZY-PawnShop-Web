@@ -282,8 +282,22 @@ async function refreshCloudData(forceRender = true) {
     }
     
     // 3. Payments
-    if (Array.isArray(cloudData.payments)) {
-      db.payments = normalizeKeys(cloudData.payments);
+    if (Array.isArray(cloudData.payments) && cloudData.payments.length > 0) {
+      const normalizedCloudPayments = normalizeKeys(cloudData.payments);
+      const mergedPayments = Array.isArray(db.payments) ? [...db.payments] : [];
+      normalizedCloudPayments.forEach(cp => {
+        const idx = mergedPayments.findIndex(lp => 
+          String(lp.BillNo || lp.bill_no) === String(cp.BillNo || cp.bill_no) && 
+          String(lp.SystemID || lp.system_id) === String(cp.SystemID || cp.system_id) && 
+          String(lp.DocNo || lp.doc_no) === String(cp.DocNo || cp.doc_no)
+        );
+        if (idx > -1) {
+          mergedPayments[idx] = cp;
+        } else {
+          mergedPayments.push(cp);
+        }
+      });
+      db.payments = mergedPayments;
       localStorage.setItem('pawn_payments', JSON.stringify(db.payments));
     }
     
@@ -1271,6 +1285,10 @@ function closeImageViewer() {
 
 // Submit payment transaction
 function submitPayment() {
+  if (!state.selectedTickets || state.selectedTickets.length === 0) {
+    alert('กรุณาเลือกตั๋วรับจำนำที่ต้องการชำระเงินอย่างน้อย 1 ใบ');
+    return;
+  }
   if (!state.selectedPaymentDateTime) {
     alert('กรุณาระบุ วันที่ และ เวลาที่ชำระเงินตามใบสลิปการโอนเงิน');
     return;
@@ -1281,23 +1299,38 @@ function submitPayment() {
   }
   
   // Format Date format to yyyy/mm/dd hh:mm:ss (avoiding timezone offset issues)
-  const dtParts = state.selectedPaymentDateTime.split('T');
-  const dateParts = dtParts[0].split('-');
-  const timeParts = (dtParts[1] || '00:00').split(':');
-  const formattedDate = `${dateParts[0]}/${dateParts[1]}/${dateParts[2]} ${timeParts[0]}:${timeParts[1]}:00`;
+  let formattedDate = '';
+  try {
+    const dtParts = String(state.selectedPaymentDateTime).split('T');
+    const dateParts = (dtParts[0] || '').split('-');
+    const timeParts = (dtParts[1] || '00:00').split(':');
+    if (dateParts.length === 3) {
+      formattedDate = `${dateParts[0]}/${dateParts[1]}/${dateParts[2]} ${timeParts[0] || '00'}:${timeParts[1] || '00'}:00`;
+    } else {
+      const now = new Date();
+      const pad2 = (n) => String(n).padStart(2, '0');
+      formattedDate = `${now.getFullYear()}/${pad2(now.getMonth()+1)}/${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:00`;
+    }
+  } catch (e) {
+    const now = new Date();
+    const pad2 = (n) => String(n).padStart(2, '0');
+    formattedDate = `${now.getFullYear()}/${pad2(now.getMonth()+1)}/${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:00`;
+  }
   
   // Generate BillNo: O + YYMMDD - Sequence(4 digits)
   const today = new Date();
+  const pad2 = (n) => String(n).padStart(2, '0');
   const year2 = String(today.getFullYear()).substring(2);
-  const month2 = pad(today.getMonth() + 1);
-  const date2 = pad(today.getDate());
+  const month2 = pad2(today.getMonth() + 1);
+  const date2 = pad2(today.getDate());
   const prefix = `O${year2}${month2}${date2}`;
   
   // Calculate increment number safely by max existing sequence for prefix
   let maxSeq = 0;
+  if (!Array.isArray(db.payments)) db.payments = [];
   (db.payments || []).forEach(p => {
-    if (p.BillNo && p.BillNo.startsWith(prefix)) {
-      const parts = p.BillNo.split('-');
+    if (p && p.BillNo && String(p.BillNo).startsWith(prefix)) {
+      const parts = String(p.BillNo).split('-');
       if (parts.length === 2) {
         const num = parseInt(parts[1], 10);
         if (!isNaN(num) && num > maxSeq) maxSeq = num;
@@ -1307,11 +1340,15 @@ function submitPayment() {
   const seqNum = maxSeq + 1;
   const billNo = `${prefix}-${String(seqNum).padStart(4, '0')}`;
   
+  const currentCustId = (state.currentUser && (state.currentUser.Id || state.currentUser.id || state.currentUser.CustCode)) 
+    ? String(state.currentUser.Id || state.currentUser.id || state.currentUser.CustCode) 
+    : '';
+
   // Perform updates for each selected ticket
   state.selectedTickets.forEach(item => {
-    const ticket = db.tickets.find(t => Number(t.DocNo) === Number(item.docNo) && Number(t.BookNo) === Number(item.bookNo));
+    const ticket = (db.tickets || []).find(t => Number(t.DocNo) === Number(item.docNo) && Number(t.BookNo) === Number(item.bookNo));
     if (ticket) {
-      const calc = calculateActiveInterest(ticket);
+      const calc = typeof calculateActiveInterest === 'function' ? calculateActiveInterest(ticket) : { interestAmount: Number(ticket.Totalint || 0), months: Number(ticket.MonthTotal || 1) };
       // 1. Update ticket fields
       ticket.BillType = '9'; // ยืนยันการชำระ / รอตรวจสอบ
       ticket.BillDate = formattedDate;
@@ -1322,14 +1359,14 @@ function submitPayment() {
       // 2. Create payment receipt entry
       const newPay = {
         BillNo: billNo,
-        SystemID: ticket.SystemID,
-        BudYear: ticket.BudYear,
-        BookNo: ticket.BookNo,
-        DocNo: ticket.DocNo,
+        SystemID: String(ticket.SystemID || ''),
+        BudYear: String(ticket.BudYear || ''),
+        BookNo: String(ticket.BookNo || ''),
+        DocNo: String(ticket.DocNo || ''),
         BillType: '9', // รออนุมัติ/ยืนยันการชำระ
         BillDate: formattedDate,
         Slip: state.selectedSlipBase64,
-        Id: state.currentUser.Id
+        Id: currentCustId || String(ticket.Id || '')
       };
       
       db.payments.push(newPay);
@@ -1342,9 +1379,9 @@ function submitPayment() {
 
   // Sync to Cloudflare immediately (fast lightweight payload ~50KB)
   const submittedTickets = state.selectedTickets.map(item => {
-    return db.tickets.find(t => Number(t.DocNo) === Number(item.docNo) && Number(t.BookNo) === Number(item.bookNo));
+    return (db.tickets || []).find(t => Number(t.DocNo) === Number(item.docNo) && Number(t.BookNo) === Number(item.bookNo));
   }).filter(Boolean);
-  const newPayments = db.payments.filter(p => p.BillNo === billNo);
+  const newPayments = (db.payments || []).filter(p => p.BillNo === billNo);
 
   try {
     fetch('/api/payment', {
@@ -1394,8 +1431,19 @@ function closePaymentSuccessModal() {
   const dtText = document.getElementById('payment-datetime-text');
   if (dtText) dtText.innerText = 'เลือก วันที่ และ เวลาชำระเงิน';
   
+  // Hide details screen
+  hidePaymentDetailsScreen();
+
+  // Refresh customer views
+  if (typeof renderCustomerTickets === 'function') renderCustomerTickets();
+  if (typeof renderSelectTicketsForPayment === 'function') renderSelectTicketsForPayment();
+  if (typeof renderCustomerHome === 'function') renderCustomerHome();
+
   // Switch to "ตั๋วจำนำ" tab immediately with yellow pending badge
-  switchCustomerTab('tickets', document.querySelectorAll('.bottom-nav .nav-item')[1]);
+  const navItems = document.querySelectorAll('.bottom-nav .nav-item');
+  if (navItems && navItems[1] && typeof switchCustomerTab === 'function') {
+    switchCustomerTab('tickets', navItems[1]);
+  }
 }
 
 // ==================== 4. ADMINISTRATOR PORTAL LOGIC ====================
