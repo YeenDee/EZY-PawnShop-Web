@@ -370,13 +370,13 @@ async function syncCurrentStateToCloud(table = null) {
     } else if (table === 'config') {
       payload = { config: db.config, sync_time: new Date().toISOString() };
     } else if (table === 'tickets') {
-      const modifiedTickets = (db.tickets || []).filter(t => t.BillType === '9' || t.BillType === '2');
+      const modifiedTickets = (db.tickets || []).filter(t => t.BillStat === 'N' || t.BillType === '9' || t.BillType === '2');
       payload = { tickets: modifiedTickets, sync_time: new Date().toISOString() };
     } else {
       payload = {
         payments: db.payments,
         config: db.config,
-        tickets: (db.tickets || []).filter(t => t.BillType === '9' || t.BillType === '2'),
+        tickets: (db.tickets || []).filter(t => t.BillStat === 'N' || t.BillType === '9' || t.BillType === '2'),
         sync_time: new Date().toISOString()
       };
     }
@@ -1293,9 +1293,18 @@ function submitPayment() {
   const date2 = pad(today.getDate());
   const prefix = `O${year2}${month2}${date2}`;
   
-  // Calculate increment number
-  const sameDayBills = (db.payments || []).filter(p => p.BillNo && p.BillNo.startsWith(prefix));
-  const seqNum = sameDayBills.length + 1;
+  // Calculate increment number safely by max existing sequence for prefix
+  let maxSeq = 0;
+  (db.payments || []).forEach(p => {
+    if (p.BillNo && p.BillNo.startsWith(prefix)) {
+      const parts = p.BillNo.split('-');
+      if (parts.length === 2) {
+        const num = parseInt(parts[1], 10);
+        if (!isNaN(num) && num > maxSeq) maxSeq = num;
+      }
+    }
+  });
+  const seqNum = maxSeq + 1;
   const billNo = `${prefix}-${String(seqNum).padStart(4, '0')}`;
   
   // Perform updates for each selected ticket

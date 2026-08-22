@@ -37,7 +37,7 @@ export async function onRequest(context) {
           await env.DB.batch([
             env.DB.prepare(`CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT, tel TEXT, cust_code TEXT)`),
             env.DB.prepare(`CREATE TABLE IF NOT EXISTS tickets (system_id TEXT, bud_year TEXT, book_no TEXT, doc_no TEXT, bill_stat TEXT, asstotal TEXT, month_total TEXT, month_int TEXT, totalint TEXT, app_date TEXT, exp_date TEXT, model TEXT, id TEXT, cust_code TEXT, PRIMARY KEY (system_id, bud_year, book_no, doc_no))`),
-            env.DB.prepare(`CREATE TABLE IF NOT EXISTS payments (bill_no TEXT PRIMARY KEY, system_id TEXT, bud_year TEXT, book_no TEXT, doc_no TEXT, bill_type TEXT, bill_date TEXT, slip TEXT, id TEXT)`),
+            env.DB.prepare(`CREATE TABLE IF NOT EXISTS payments (bill_no TEXT, system_id TEXT, bud_year TEXT, book_no TEXT, doc_no TEXT, bill_type TEXT, bill_date TEXT, slip TEXT, id TEXT, PRIMARY KEY (bill_no, system_id, bud_year, book_no, doc_no))`),
             env.DB.prepare(`CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)`),
           ]);
         } catch(e) {}
@@ -98,7 +98,7 @@ export async function onRequest(context) {
             const bno = String(p.BillNo || p.bill_no || '');
             if (!bno) continue;
             payStmts.push(
-              env.DB.prepare(`INSERT INTO payments (bill_no,system_id,bud_year,book_no,doc_no,bill_type,bill_date,slip,id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(bill_no) DO UPDATE SET bill_type=excluded.bill_type,bill_date=excluded.bill_date,slip=excluded.slip`)
+              env.DB.prepare(`INSERT INTO payments (bill_no,system_id,bud_year,book_no,doc_no,bill_type,bill_date,slip,id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(bill_no,system_id,bud_year,book_no,doc_no) DO UPDATE SET bill_type=excluded.bill_type,bill_date=excluded.bill_date,slip=excluded.slip`)
                 .bind(bno, String(p.SystemID||p.system_id||''), String(p.BudYear||p.bud_year||''), String(p.BookNo||p.book_no||''), String(p.DocNo||p.doc_no||''), String(p.BillType||p.bill_type||'9'), String(p.BillDate||p.bill_date||''), String(p.Slip||p.slip||''), String(p.Id||p.id||''))
             );
           }
@@ -123,7 +123,20 @@ export async function onRequest(context) {
           const raw = await env.PAWNSHOP_KV.get('db_sync_latest');
           let prev = {};
           if (raw) { try { prev = JSON.parse(raw); } catch(e){} }
-          const mergedPayments = [...(prev.payments || []).filter(p => !data.payments.some(dp => dp.BillNo === p.BillNo)), ...data.payments];
+          const existingPayments = prev.payments || [];
+          const mergedPayments = [...existingPayments];
+          for (const dp of data.payments) {
+            const bno = String(dp.BillNo || dp.bill_no || '');
+            const sysId = String(dp.SystemID || dp.system_id || '');
+            const docNo = String(dp.DocNo || dp.doc_no || '');
+            const idx = mergedPayments.findIndex(p =>
+              String(p.BillNo || p.bill_no) === bno &&
+              String(p.SystemID || p.system_id) === sysId &&
+              String(p.DocNo || p.doc_no) === docNo
+            );
+            if (idx > -1) mergedPayments[idx] = dp;
+            else mergedPayments.push(dp);
+          }
           prev.payments = mergedPayments;
           if (data.config) prev.config = { ...(prev.config || {}), ...data.config };
           await env.PAWNSHOP_KV.put('db_sync_latest', JSON.stringify(prev));
