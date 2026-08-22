@@ -830,6 +830,48 @@
       </div>
     </div>
 
+    <!-- ==================== 5.6 PAYMENT ERROR MODAL ==================== -->
+    <div id="payment-error-modal" class="modal-overlay">
+      <div class="modal-content" style="max-width: 370px; text-align: center; padding: 26px 20px;">
+        <!-- Error icon -->
+        <div style="width: 64px; height: 64px; margin: 0 auto 16px; background-color: #fdecea; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(183,28,28,0.15);">
+          <i class="fa-solid fa-circle-exclamation" style="font-size: 36px; color: #c62828;"></i>
+        </div>
+        <h3 style="font-size: 17px; color: var(--text-dark); margin-bottom: 6px; font-weight: 700;">ส่งข้อมูลขึ้น Cloud ไม่สำเร็จ</h3>
+        <p style="font-size: 13px; color: var(--text-medium); margin-bottom: 14px;">ข้อมูลได้บันทึกไว้บนเครื่องแล้ว กรุณาลองใหม่อีกครั้ง</p>
+
+        <!-- BillNo -->
+        <div style="background-color: #f8f9fa; border: 1.5px dashed var(--border-medium); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 12px; text-align: left;">
+          <div style="font-size: 11px; color: var(--text-medium); margin-bottom: 2px;">รหัสรับชำระเงิน (Bill No.)</div>
+          <div id="payment-error-bill-no" class="number" style="font-size: 16px; font-weight: 800; color: var(--primary-red); letter-spacing: 0.5px;">-</div>
+        </div>
+
+        <!-- Error details box -->
+        <div style="background-color: #fff3f3; border: 1.5px solid #ffcdd2; border-radius: var(--radius-sm); padding: 12px; margin-bottom: 18px; text-align: left;">
+          <div style="font-size: 11px; color: #b71c1c; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+            <i class="fa-solid fa-triangle-exclamation"></i> รายละเอียด Error
+          </div>
+          <div style="font-size: 12px; color: #555; margin-bottom: 4px;">
+            <span style="font-weight: 600; color: #c62828;">Error Code:</span>
+            <span id="payment-error-code" class="number" style="margin-left: 6px; background-color: #fdecea; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 700; color: #b71c1c;">-</span>
+          </div>
+          <div style="font-size: 12px; color: #555; word-break: break-all; line-height: 1.5;">
+            <span style="font-weight: 600;">รายละเอียด:</span>
+            <span id="payment-error-msg" style="margin-left: 4px; color: #444;">-</span>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <button type="button" class="btn btn-primary" onclick="closePaymentErrorModal(); submitPayment();" style="width: 100%; font-size: 14px; font-weight: 700; padding: 11px; background: var(--primary-red);">
+            <i class="fa-solid fa-rotate-right"></i> ลองส่งใหม่อีกครั้ง
+          </button>
+          <button type="button" class="btn btn-secondary" onclick="closePaymentErrorModal();" style="width: 100%; font-size: 14px; padding: 11px;">
+            <i class="fa-solid fa-xmark"></i> ปิด (ข้อมูลบันทึกอยู่บนเครื่องแล้ว)
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- ==================== 6. SLIP OPTIONS MODAL (GALLERY / CAMERA) ==================== -->
     <div id="slip-options-modal" class="modal-overlay" onclick="closeSlipOptionsModal()">
       <div class="modal-content" onclick="event.stopPropagation()" style="max-width: 320px;">
@@ -945,6 +987,6 @@
   </div>
 
   <!-- JavaScript Logics -->
-  <script src="app.js?v=46"></script>
+  <script src="app.js?v=47"></script>
 </body>
 </html>

@@ -1284,7 +1284,7 @@ function closeImageViewer() {
 }
 
 // Submit payment transaction
-function submitPayment() {
+async function submitPayment() {
   if (!state.selectedTickets || state.selectedTickets.length === 0) {
     alert('กรุณาเลือกตั๋วรับจำนำที่ต้องการชำระเงินอย่างน้อย 1 ใบ');
     return;
@@ -1383,23 +1383,49 @@ function submitPayment() {
   }).filter(Boolean);
   const newPayments = (db.payments || []).filter(p => p.BillNo === billNo);
 
+  // Send to Cloudflare and wait for response — show error if failed
+  let cloudOk = false;
+  let cloudErrorCode = '';
+  let cloudErrorMsg = '';
   try {
-    fetch('/api/payment', {
+    const res = await fetch('/api/payment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ payment: newPayments[0], payments: newPayments, ticket: submittedTickets[0], tickets: submittedTickets })
     });
-    fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ payments: newPayments, tickets: submittedTickets })
-    });
-  } catch(e) {}
-  
+
+    if (res.ok) {
+      cloudOk = true;
+      // Also push to /api/sync in background (non-blocking)
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payments: newPayments, tickets: submittedTickets })
+      }).catch(() => {});
+    } else {
+      cloudErrorCode = `HTTP ${res.status} ${res.statusText}`;
+      try {
+        const errJson = await res.json();
+        cloudErrorMsg = errJson.error || errJson.message || JSON.stringify(errJson);
+      } catch (je) {
+        try { cloudErrorMsg = await res.text(); } catch (te) { cloudErrorMsg = '(ไม่สามารถอ่าน response ได้)'; }
+      }
+    }
+  } catch (netErr) {
+    cloudErrorCode = 'Network Error';
+    cloudErrorMsg = netErr && netErr.message ? netErr.message : String(netErr);
+  }
+
+  if (!cloudOk) {
+    // Show error modal with code
+    showPaymentErrorModal(billNo, cloudErrorCode, cloudErrorMsg);
+    return;
+  }
+
   // Trigger In-App Payment Success Modal
   const billNoEl = document.getElementById('success-modal-bill-no');
   if (billNoEl) billNoEl.innerText = billNo;
-  
+
   const successModal = document.getElementById('payment-success-modal');
   if (successModal) {
     successModal.classList.add('active');
@@ -1407,6 +1433,27 @@ function submitPayment() {
     alert(`✅ ส่งข้อมูลหลักฐานเรียบร้อยแล้ว!\nรหัสรับชำระ: ${billNo}\n\nระบบได้ส่งข้อมูลหลักฐานไปยังโรงรับจำนำเรียบร้อยแล้ว อยู่ระหว่างเจ้าหน้าที่ตรวจสอบ`);
     closePaymentSuccessModal();
   }
+}
+
+function showPaymentErrorModal(billNo, errorCode, errorMsg) {
+  const modal = document.getElementById('payment-error-modal');
+  if (modal) {
+    const codeEl = document.getElementById('payment-error-code');
+    const msgEl  = document.getElementById('payment-error-msg');
+    const billEl = document.getElementById('payment-error-bill-no');
+    if (codeEl) codeEl.innerText = errorCode || 'Unknown Error';
+    if (msgEl)  msgEl.innerText  = errorMsg  || '-';
+    if (billEl) billEl.innerText = billNo     || '-';
+    modal.classList.add('active');
+  } else {
+    // Fallback: alert
+    alert(`❌ ส่งข้อมูลขึ้น Cloudflare ไม่สำเร็จ\n\nรหัสรับชำระ: ${billNo}\nError Code: ${errorCode}\nรายละเอียด: ${errorMsg}\n\nข้อมูลได้บันทึกไว้บนเครื่องแล้ว กรุณาลองใหม่อีกครั้ง`);
+  }
+}
+
+function closePaymentErrorModal() {
+  const modal = document.getElementById('payment-error-modal');
+  if (modal) modal.classList.remove('active');
 }
 
 function closePaymentSuccessModal() {
