@@ -65,7 +65,10 @@ export async function onRequest(context) {
             console.error(`[payment] R2 Upload Error for ${bno}:`, r2Err);
           }
         }
-       let d1Error = null;
+        return pathUrl;
+      }
+
+      let d1Error = null;
       if (env.DB) {
         try {
           // Table creation statement
