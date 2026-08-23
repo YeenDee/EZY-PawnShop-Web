@@ -88,20 +88,23 @@ export async function onRequest(context) {
       }
 
       // Also persist to KV if available
-      // NOTE: Strip slip (base64 image) before KV to avoid quota exceeded.
-      //       Slip is already saved in D1. KV stores metadata only.
+      // IMPORTANT: Strip slip from ALL payments (existing + new) before KV put.
+      // Previous KV writes may have accumulated base64 slip data.
       let kvError = null;
       if (env.PAWNSHOP_KV) {
         try {
           const raw = await env.PAWNSHOP_KV.get('db_sync_latest');
           let prev = {};
           if (raw) { try { prev = JSON.parse(raw); } catch(e){} }
-          let curPayments = prev.payments || [];
+          // Strip slip from ALL existing payments in KV (clean up accumulated data)
+          let curPayments = (prev.payments || []).map(cp => {
+            const c = { ...cp }; delete c.Slip; delete c.slip; return c;
+          });
+          // Merge new payments (also strip slip)
           for (const p of payments) {
             const bno   = String(p.BillNo   || p.bill_no   || '');
             const sysId = String(p.SystemID || p.system_id || '');
             const docNo = String(p.DocNo    || p.doc_no    || '');
-            // Strip slip (base64) — can be large and cause quota exceeded
             const pKV = { ...p };
             delete pKV.Slip;
             delete pKV.slip;
@@ -115,17 +118,16 @@ export async function onRequest(context) {
           }
           prev.payments = curPayments;
           const kvPayload = JSON.stringify(prev);
-          // KV value limit: 25 MB. Warn in logs if approaching.
           if (kvPayload.length > 20_000_000) {
             console.warn(`[payment] KV payload size ${kvPayload.length} bytes — approaching 25MB limit`);
           }
           await env.PAWNSHOP_KV.put('db_sync_latest', kvPayload);
         } catch (kvErr) {
-          // Surface KV error — do NOT swallow silently
           console.error('[payment] KV put error:', kvErr);
           kvError = kvErr.message || String(kvErr);
         }
       }
+
 
       return new Response(JSON.stringify({
         success: true,
