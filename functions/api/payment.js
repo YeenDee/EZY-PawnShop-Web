@@ -37,6 +37,37 @@ export async function onRequest(context) {
 
       const mainBillNo = String(payments[0].BillNo || payments[0].bill_no || '');
 
+      // Helper to process slip image (upload to R2 if base64, store path URL)
+      async function processSlip(p, bno) {
+        let rawSlip = String(p.Slip || p.slip || '');
+        if (!rawSlip || rawSlip.length < 200) {
+          return rawSlip; // Already a URL or empty
+        }
+        const pathUrl = `/Slip/${bno}.jpg`;
+        if (env.SLIP_BUCKET) {
+          try {
+            const base64Data = rawSlip.replace(/^data:image\/\w+;base64,/, '');
+            const binaryStr = atob(base64Data);
+            const len = binaryStr.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              bytes[i] = binaryStr.charCodeAt(i);
+            }
+            let contentType = 'image/jpeg';
+            if (rawSlip.startsWith('data:image/png')) contentType = 'image/png';
+            else if (rawSlip.startsWith('data:image/webp')) contentType = 'image/webp';
+
+            await env.SLIP_BUCKET.put(`Slip/${bno}.jpg`, bytes, {
+              httpMetadata: { contentType }
+            });
+            console.log(`[payment] Saved slip for ${bno} to R2 (Slip/${bno}.jpg)`);
+          } catch (r2Err) {
+            console.error(`[payment] R2 Upload Error for ${bno}:`, r2Err);
+          }
+        }
+        return pathUrl;
+      }
+
       if (env.DB) {
         try {
           // Table creation statement
@@ -48,6 +79,7 @@ export async function onRequest(context) {
           for (const p of payments) {
             const bno = String(p.BillNo || p.bill_no || '');
             if (!bno) continue;
+            const slipUrl = await processSlip(p, bno);
             payStmts.push(
               env.DB.prepare(
                 `INSERT INTO payments (bill_no,system_id,bud_year,book_no,doc_no,bill_type,bill_date,slip,id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(bill_no,system_id,bud_year,book_no,doc_no) DO UPDATE SET bill_type=excluded.bill_type,bill_date=excluded.bill_date,slip=excluded.slip`
@@ -59,7 +91,7 @@ export async function onRequest(context) {
                 String(p.DocNo || p.doc_no || ''),
                 String(p.BillType || p.bill_type || '9'),
                 String(p.BillDate || p.bill_date || ''),
-                String(p.Slip || p.slip || ''),
+                slipUrl,
                 String(p.Id || p.id || '')
               )
             );

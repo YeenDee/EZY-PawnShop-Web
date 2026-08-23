@@ -169,7 +169,7 @@ export async function onRequest(context) {
     if (env.DB) {
       const { results: customers } = await env.DB.prepare("SELECT id as Id, cust_code as CustCode, name as Name, tel as Tel FROM customers").all();
       const { results: tickets } = await env.DB.prepare("SELECT system_id as SystemID, bud_year as BudYear, book_no as BookNo, doc_no as DocNo, bill_stat as BillStat, asstotal as Asstotal, month_total as MonthTotal, month_int as MonthInt, totalint as Totalint, app_date as AppDate, exp_date as ExpDate, model as Model, id as Id, cust_code as CustCode FROM tickets").all();
-      const { results: payments } = await env.DB.prepare("SELECT bill_no as BillNo, system_id as SystemID, bud_year as BudYear, book_no as BookNo, doc_no as DocNo, bill_type as BillType, bill_date as BillDate, id as Id FROM payments").all();
+      const { results: payments } = await env.DB.prepare("SELECT bill_no as BillNo, system_id as SystemID, bud_year as BudYear, book_no as BookNo, doc_no as DocNo, bill_type as BillType, bill_date as BillDate, slip as Slip, id as Id FROM payments").all();
       let config = {};
       try {
         const { results: cfgRows } = await env.DB.prepare("SELECT key, value FROM config").all();

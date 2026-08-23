@@ -27,3 +27,9 @@ database_id = "e2e13521-f66b-4fef-8542-c7d97da9311a"
 [[r2_buckets]]
 binding = "BACKUP_BUCKET"
 bucket_name = "ezy-pawnshop-backups"
+
+# Cloudflare R2 Bucket Binding for Payment Slips Storage (/Slip/filename.jpg)
+[[r2_buckets]]
+binding = "SLIP_BUCKET"
+bucket_name = "ezy-pawnshop-slips"
+
