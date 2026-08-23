@@ -181,46 +181,83 @@ function normalizeKeys(obj) {
   return normalized;
 }
 
+// Helper for safely writing to LocalStorage (handles QuotaExceededError when storing images/large objects)
+function safeSetLocalStorage(key, data) {
+  const strData = typeof data === 'string' ? data : JSON.stringify(data);
+  try {
+    localStorage.setItem(key, strData);
+  } catch (err) {
+    console.warn(`[LocalStorage] setItem failed for "${key}" (Quota exceeded?), attempting quota cleanup:`, err);
+    if (key === 'pawn_payments' && Array.isArray(data)) {
+      // Strip heavy base64 slip images from local storage to prevent QuotaExceededError
+      const cleaned = data.map(p => {
+        if (p && (p.Slip || p.slip) && String(p.Slip || p.slip).length > 200) {
+          const pClean = { ...p };
+          delete pClean.Slip;
+          delete pClean.slip;
+          return pClean;
+        }
+        return p;
+      });
+      try {
+        localStorage.setItem(key, JSON.stringify(cleaned));
+        console.log('[LocalStorage] Successfully saved pawn_payments after stripping heavy slip images.');
+        return;
+      } catch (err2) {
+        console.error('[LocalStorage] Still failed to save pawn_payments after stripping slips:', err2);
+      }
+    }
+    // General fallback: clear pawn_sync_history or old cached data if still failing
+    try {
+      localStorage.removeItem('pawn_sync_history');
+      localStorage.removeItem('pawn_backup_history');
+      localStorage.setItem(key, strData);
+    } catch (err3) {
+      console.error('[LocalStorage] Critical quota error, could not save item:', key, err3);
+    }
+  }
+}
+
 // Load or Initialize database tables in LocalStorage
 function initDB() {
   if (!localStorage.getItem('pawn_customers')) {
-    localStorage.setItem('pawn_customers', JSON.stringify(DEFAULT_CUSTOMERS));
+    safeSetLocalStorage('pawn_customers', DEFAULT_CUSTOMERS);
   }
   const storedUsers = localStorage.getItem('pawn_users');
   if (!storedUsers || !storedUsers.includes('"admin"')) {
-    localStorage.setItem('pawn_users', JSON.stringify(DEFAULT_USERS));
+    safeSetLocalStorage('pawn_users', DEFAULT_USERS);
   }
   if (!localStorage.getItem('pawn_tickets')) {
-    localStorage.setItem('pawn_tickets', JSON.stringify(DEFAULT_TICKETS));
+    safeSetLocalStorage('pawn_tickets', DEFAULT_TICKETS);
   }
   if (!localStorage.getItem('pawn_payments')) {
-    localStorage.setItem('pawn_payments', JSON.stringify(DEFAULT_PAYMENTS));
+    safeSetLocalStorage('pawn_payments', DEFAULT_PAYMENTS);
   }
   const storedConfig = localStorage.getItem('pawn_config');
   if (!storedConfig) {
-    localStorage.setItem('pawn_config', JSON.stringify(DEFAULT_CONFIG));
+    safeSetLocalStorage('pawn_config', DEFAULT_CONFIG);
   } else {
     try {
       const parsed = JSON.parse(storedConfig);
       if (parsed.system_id === undefined) {
         parsed.system_id = 3;
-        localStorage.setItem('pawn_config', JSON.stringify(parsed));
+        safeSetLocalStorage('pawn_config', parsed);
       }
     } catch (e) {
-      localStorage.setItem('pawn_config', JSON.stringify(DEFAULT_CONFIG));
+      safeSetLocalStorage('pawn_config', DEFAULT_CONFIG);
     }
   }
   if (!localStorage.getItem('pawn_sync_history')) {
-    localStorage.setItem('pawn_sync_history', JSON.stringify(DEFAULT_SYNC_HISTORY));
+    safeSetLocalStorage('pawn_sync_history', DEFAULT_SYNC_HISTORY);
   }
   if (!localStorage.getItem('pawn_backup_history')) {
-    localStorage.setItem('pawn_backup_history', JSON.stringify(DEFAULT_BACKUP_HISTORY));
+    safeSetLocalStorage('pawn_backup_history', DEFAULT_BACKUP_HISTORY);
   }
   if (!localStorage.getItem('pawn_positions')) {
-    localStorage.setItem('pawn_positions', JSON.stringify(DEFAULT_POSITIONS));
+    safeSetLocalStorage('pawn_positions', DEFAULT_POSITIONS);
   }
   if (!localStorage.getItem('pawn_holidays')) {
-    localStorage.setItem('pawn_holidays', JSON.stringify(DEFAULT_HOLIDAYS));
+    safeSetLocalStorage('pawn_holidays', DEFAULT_HOLIDAYS);
   }
 }
 
@@ -268,7 +305,7 @@ async function refreshCloudData(forceRender = true) {
     // 1. Tickets
     if (Array.isArray(cloudData.tickets) && cloudData.tickets.length > 0) {
       db.tickets = normalizeKeys(cloudData.tickets);
-      localStorage.setItem('pawn_tickets', JSON.stringify(db.tickets));
+      safeSetLocalStorage('pawn_tickets', db.tickets);
     }
     
     // 2. Customers
@@ -278,7 +315,7 @@ async function refreshCloudData(forceRender = true) {
         if (c.Name) c.Name = String(c.Name).replace(/\s+/g, ' ').trim();
       });
       db.customers = customers;
-      localStorage.setItem('pawn_customers', JSON.stringify(db.customers));
+      safeSetLocalStorage('pawn_customers', db.customers);
     }
     
     // 3. Payments
@@ -298,13 +335,13 @@ async function refreshCloudData(forceRender = true) {
         }
       });
       db.payments = mergedPayments;
-      localStorage.setItem('pawn_payments', JSON.stringify(db.payments));
+      safeSetLocalStorage('pawn_payments', db.payments);
     }
     
     // 4. Config
     if (cloudData.config && typeof cloudData.config === 'object') {
       db.config = { ...db.config, ...cloudData.config };
-      localStorage.setItem('pawn_config', JSON.stringify(db.config));
+      safeSetLocalStorage('pawn_config', db.config);
       applyBankSettingsToUI();
     } else {
       loadLiveBankConfig();
@@ -370,7 +407,7 @@ if (db.config) {
 }
 
 function saveDBTable(table) {
-  localStorage.setItem('pawn_' + table, JSON.stringify(db[table]));
+  safeSetLocalStorage('pawn_' + table, db[table]);
   if (table === 'tickets' || table === 'payments' || table === 'customers' || table === 'config') {
     syncCurrentStateToCloud(table);
   }
@@ -1399,8 +1436,8 @@ async function _doSubmitPayment() {
   });
   
   // Save tables locally
-  localStorage.setItem('pawn_tickets', JSON.stringify(db.tickets));
-  localStorage.setItem('pawn_payments', JSON.stringify(db.payments));
+  safeSetLocalStorage('pawn_tickets', db.tickets);
+  safeSetLocalStorage('pawn_payments', db.payments);
 
   // Sync to Cloudflare immediately (fast lightweight payload ~50KB)
   const submittedTickets = state.selectedTickets.map(item => {
