@@ -126,21 +126,31 @@ export async function onRequest(context) {
           const existingPayments = prev.payments || [];
           const mergedPayments = [...existingPayments];
           for (const dp of data.payments) {
-            const bno = String(dp.BillNo || dp.bill_no || '');
+            const bno   = String(dp.BillNo   || dp.bill_no   || '');
             const sysId = String(dp.SystemID || dp.system_id || '');
-            const docNo = String(dp.DocNo || dp.doc_no || '');
+            const docNo = String(dp.DocNo    || dp.doc_no    || '');
+            // Strip slip (base64 image) from KV to avoid quota exceeded
+            const dpKV = { ...dp };
+            delete dpKV.Slip;
+            delete dpKV.slip;
             const idx = mergedPayments.findIndex(p =>
-              String(p.BillNo || p.bill_no) === bno &&
+              String(p.BillNo   || p.bill_no)   === bno &&
               String(p.SystemID || p.system_id) === sysId &&
-              String(p.DocNo || p.doc_no) === docNo
+              String(p.DocNo    || p.doc_no)    === docNo
             );
-            if (idx > -1) mergedPayments[idx] = dp;
-            else mergedPayments.push(dp);
+            if (idx > -1) mergedPayments[idx] = dpKV;
+            else mergedPayments.push(dpKV);
           }
           prev.payments = mergedPayments;
           if (data.config) prev.config = { ...(prev.config || {}), ...data.config };
-          await env.PAWNSHOP_KV.put('db_sync_latest', JSON.stringify(prev));
-        } catch(e){}
+          const kvPayload = JSON.stringify(prev);
+          if (kvPayload.length > 20_000_000) {
+            console.warn(`[sync] KV payload size ${kvPayload.length} bytes — approaching 25MB limit`);
+          }
+          await env.PAWNSHOP_KV.put('db_sync_latest', kvPayload);
+        } catch(e){
+          console.error('[sync] KV put error:', e);
+        }
       }
 
       return new Response(JSON.stringify({ success: true, message: 'บันทึกข้อมูลเข้า Cloudflare D1 SQL Database สำเร็จ' }), {

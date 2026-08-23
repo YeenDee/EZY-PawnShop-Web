@@ -88,6 +88,9 @@ export async function onRequest(context) {
       }
 
       // Also persist to KV if available
+      // NOTE: Strip slip (base64 image) before KV to avoid quota exceeded.
+      //       Slip is already saved in D1. KV stores metadata only.
+      let kvError = null;
       if (env.PAWNSHOP_KV) {
         try {
           const raw = await env.PAWNSHOP_KV.get('db_sync_latest');
@@ -95,27 +98,42 @@ export async function onRequest(context) {
           if (raw) { try { prev = JSON.parse(raw); } catch(e){} }
           let curPayments = prev.payments || [];
           for (const p of payments) {
-            const bno = String(p.BillNo || p.bill_no || '');
+            const bno   = String(p.BillNo   || p.bill_no   || '');
             const sysId = String(p.SystemID || p.system_id || '');
-            const docNo = String(p.DocNo || p.doc_no || '');
-            const idx = curPayments.findIndex(cp => 
-              String(cp.BillNo || cp.bill_no) === bno &&
+            const docNo = String(p.DocNo    || p.doc_no    || '');
+            // Strip slip (base64) — can be large and cause quota exceeded
+            const pKV = { ...p };
+            delete pKV.Slip;
+            delete pKV.slip;
+            const idx = curPayments.findIndex(cp =>
+              String(cp.BillNo   || cp.bill_no)   === bno &&
               String(cp.SystemID || cp.system_id) === sysId &&
-              String(cp.DocNo || cp.doc_no) === docNo
+              String(cp.DocNo    || cp.doc_no)    === docNo
             );
-            if (idx > -1) curPayments[idx] = p;
-            else curPayments.push(p);
+            if (idx > -1) curPayments[idx] = pKV;
+            else curPayments.push(pKV);
           }
           prev.payments = curPayments;
-          await env.PAWNSHOP_KV.put('db_sync_latest', JSON.stringify(prev));
-        } catch (kvErr) {}
+          const kvPayload = JSON.stringify(prev);
+          // KV value limit: 25 MB. Warn in logs if approaching.
+          if (kvPayload.length > 20_000_000) {
+            console.warn(`[payment] KV payload size ${kvPayload.length} bytes — approaching 25MB limit`);
+          }
+          await env.PAWNSHOP_KV.put('db_sync_latest', kvPayload);
+        } catch (kvErr) {
+          // Surface KV error — do NOT swallow silently
+          console.error('[payment] KV put error:', kvErr);
+          kvError = kvErr.message || String(kvErr);
+        }
       }
 
       return new Response(JSON.stringify({
         success: true,
         message: `บันทึกรายการชำระเงิน ${mainBillNo} (${payments.length} รายการ) ขึ้น Cloudflare สำเร็จ`,
         bill_no: mainBillNo,
-        count: payments.length
+        count: payments.length,
+        // Include KV warning if it failed (D1 still succeeded)
+        kv_warning: kvError ? `KV sync warning: ${kvError}` : undefined
       }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders }
       });
