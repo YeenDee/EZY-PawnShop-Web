@@ -1297,6 +1297,31 @@ async function submitPayment() {
     alert('กรุณาอัปโหลดรูปภาพใบสลิปการโอนเงินเพื่อใช้เป็นหลักฐาน');
     return;
   }
+
+  // Show loading state on button
+  const submitBtn = document.querySelector('[onclick="submitPayment()"]');
+  const originalBtnHTML = submitBtn ? submitBtn.innerHTML : '';
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังส่งข้อมูล...';
+  }
+
+  try {
+    await _doSubmitPayment();
+  } catch (unexpectedErr) {
+    console.error('[submitPayment] Unexpected error:', unexpectedErr);
+    alert('เกิดข้อผิดพลาดที่ไม่คาดคิด:\n' + (unexpectedErr && unexpectedErr.message ? unexpectedErr.message : String(unexpectedErr)));
+  } finally {
+    // Always restore the button
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = originalBtnHTML;
+    }
+  }
+}
+
+// Internal implementation — separated so submitPayment() can always restore the button
+async function _doSubmitPayment() {
   
   // Format Date format to yyyy/mm/dd hh:mm:ss (avoiding timezone offset issues)
   let formattedDate = '';
