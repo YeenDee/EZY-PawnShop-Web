@@ -98,7 +98,7 @@ export async function onRequest(context) {
             const bno = String(p.BillNo || p.bill_no || '');
             if (!bno) continue;
             payStmts.push(
-              env.DB.prepare(`INSERT INTO payments (bill_no,system_id,bud_year,book_no,doc_no,bill_type,bill_date,slip,id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(bill_no,system_id,bud_year,book_no,doc_no) DO UPDATE SET bill_type=excluded.bill_type,bill_date=excluded.bill_date,slip=excluded.slip`)
+              env.DB.prepare(`INSERT OR REPLACE INTO payments (bill_no,system_id,bud_year,book_no,doc_no,bill_type,bill_date,slip,id) VALUES(?,?,?,?,?,?,?,?,?)`)
                 .bind(bno, String(p.SystemID||p.system_id||''), String(p.BudYear||p.bud_year||''), String(p.BookNo||p.book_no||''), String(p.DocNo||p.doc_no||''), String(p.BillType||p.bill_type||'9'), String(p.BillDate||p.bill_date||''), String(p.Slip||p.slip||''), String(p.Id||p.id||''))
             );
           }

@@ -65,24 +65,22 @@ export async function onRequest(context) {
             console.error(`[payment] R2 Upload Error for ${bno}:`, r2Err);
           }
         }
-        return pathUrl;
-      }
-
+       let d1Error = null;
       if (env.DB) {
         try {
           // Table creation statement
-          const createTableStmt = env.DB.prepare(
+          await env.DB.prepare(
             `CREATE TABLE IF NOT EXISTS payments (bill_no TEXT, system_id TEXT, bud_year TEXT, book_no TEXT, doc_no TEXT, bill_type TEXT, bill_date TEXT, slip TEXT, id TEXT, PRIMARY KEY (bill_no, system_id, bud_year, book_no, doc_no))`
-          );
+          ).run();
 
-          const payStmts = [createTableStmt];
+          const payStmts = [];
           for (const p of payments) {
             const bno = String(p.BillNo || p.bill_no || '');
             if (!bno) continue;
             const slipUrl = await processSlip(p, bno);
             payStmts.push(
               env.DB.prepare(
-                `INSERT INTO payments (bill_no,system_id,bud_year,book_no,doc_no,bill_type,bill_date,slip,id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(bill_no,system_id,bud_year,book_no,doc_no) DO UPDATE SET bill_type=excluded.bill_type,bill_date=excluded.bill_date,slip=excluded.slip`
+                `INSERT OR REPLACE INTO payments (bill_no,system_id,bud_year,book_no,doc_no,bill_type,bill_date,slip,id) VALUES(?,?,?,?,?,?,?,?,?)`
               ).bind(
                 bno,
                 String(p.SystemID || p.system_id || ''),
@@ -113,9 +111,12 @@ export async function onRequest(context) {
             );
           }
 
-          await env.DB.batch(payStmts);
+          if (payStmts.length > 0) {
+            await env.DB.batch(payStmts);
+          }
         } catch (dbErr) {
           console.error('D1 Payment Insert Error:', dbErr);
+          d1Error = dbErr.message || String(dbErr);
         }
       }
 
@@ -160,15 +161,17 @@ export async function onRequest(context) {
         }
       }
 
-
       return new Response(JSON.stringify({
-        success: true,
-        message: `บันทึกรายการชำระเงิน ${mainBillNo} (${payments.length} รายการ) ขึ้น Cloudflare สำเร็จ`,
+        success: !d1Error,
+        message: d1Error
+          ? `เกิดข้อผิดพลาดในการบันทึก D1 Database: ${d1Error}`
+          : `บันทึกรายการชำระเงิน ${mainBillNo} (${payments.length} รายการ) ขึ้น Cloudflare สำเร็จ`,
         bill_no: mainBillNo,
         count: payments.length,
-        // Include KV warning if it failed (D1 still succeeded)
+        d1_error: d1Error || undefined,
         kv_warning: kvError ? `KV sync warning: ${kvError}` : undefined
       }), {
+        status: d1Error ? 500 : 200,
         headers: { 'Content-Type': 'application/json', ...corsHeaders }
       });
     } catch (err) {
