@@ -420,20 +420,13 @@ def run_db_sync(mock_mode=False):
         f.write(payload_str)
     print(f"[*] บันทึกสำเนาไฟล์ซิงค์ล่าสุดที่: {local_sync_file}")
     
-    # Upload to Cloudflare KV (cache/fallback) — ลอง KV API ก่อน
-    print(f"\n[*] === ขั้นตอนที่ 2: ส่งข้อมูลขึ้น Cloudflare ===")
-    success, result = upload_to_cloudflare_kv("db_sync_latest", payload_str)
-    
-    if success:
-        print(f"[+] ซิงค์ข้อมูลขึ้น Cloudflare KV สำเร็จ!")
-    else:
-        # KV ล้มเหลว (token หมดอายุ/ถูก revoke) -> สลับไปใช้ chunked POST ส่งตรงเข้า D1
-        print(f"\n[*] KV ล้มเหลว — สลับไปส่งข้อมูลตรงเข้า Cloudflare D1 แบบ chunk (100 records/chunk)...")
-        success = upload_chunked_to_pages(customers_data, tickets_data, [])
+    # ส่งข้อมูลตรงเข้า Cloudflare D1 ผ่าน Pages Function /api/sync (ไม่ผ่าน KV)
+    print(f"\n[*] === ขั้นตอนที่ 2: ส่งข้อมูลตรงเข้า Cloudflare D1 (MySQL → D1) ===")
+    success = upload_chunked_to_pages(customers_data, tickets_data, [])
     
     if success:
         print(f"\n{'='*50}")
-        print(f"  [OK] ซิงค์ข้อมูลขึ้น Cloudflare สำเร็จ!")
+        print(f"  [OK] ซิงค์ข้อมูลขึ้น Cloudflare D1 สำเร็จ! (MySQL → D1 โดยตรง)")
         print(f"  - ตั๋วจำนำ  : {len(tickets_data):,} รายการ")
         print(f"  - ลูกค้า   : {len(customers_data):,} รายการ")
         print(f"  (อ่านเฉพาะ customer และ ticket ตามคำสั่ง)")
@@ -445,11 +438,11 @@ def run_db_sync(mock_mode=False):
         print(f"  [FAIL] ไม่สามารถส่งข้อมูลขึ้น Cloudflare ได้")
         print(f"  กรุณาตรวจสอบ:")
         print(f"  1. อินเทอร์เน็ตเชื่อมต่ออยู่ไหม")
-        print(f"  2. สร้าง API Token ใหม่ที่ https://dash.cloudflare.com/profile/api-tokens")
-        print(f"     แล้วอัปเดตใน option.ini")
+        print(f"  2. URL ของ Pages Function ถูกต้องไหม")
         print(f"{'='*50}\n")
 
     print("="*50 + "\n")
+
 
 
 def run_db_backup(date_str=None, mock_mode=False):

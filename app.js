@@ -1670,23 +1670,27 @@ async function loadUsersFromCloud() {
     if (res.ok) {
       const data = await res.json();
       if (data && data.success && Array.isArray(data.users) && data.users.length > 0) {
-        const cloudUsers = normalizeKeys(data.users);
-        cloudUsers.forEach(cu => {
-          const idx = (db.users || []).findIndex(lu => String(lu.UserID).toLowerCase() === String(cu.UserID).toLowerCase());
-          if (idx > -1) {
-            db.users[idx] = { ...db.users[idx], ...cu, Password: cu.Password || db.users[idx].Password };
-          } else {
-            db.users.push(cu);
-          }
-        });
+        // ใช้ D1 เป็น source หลัก — overwrite local ทั้งหมด เพื่อให้ข้อมูลชุดเดียวกัน
+        db.users = normalizeKeys(data.users);
         safeSetLocalStorage('pawn_users', db.users);
-        console.log('[Users] Loaded users from Cloudflare D1:', db.users.length);
+        console.log('[Users] Loaded users from Cloudflare D1 (source of truth):', db.users.length);
+      } else if (data && data.success && Array.isArray(data.users) && data.users.length === 0) {
+        // D1 ว่างเปล่า: sync ข้อมูล local ขึ้น D1 เพื่อให้สอดคล้องกัน
+        if (db.users && db.users.length > 0) {
+          console.log('[Users] D1 users empty — pushing local users to D1...');
+          await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'upsert', users: db.users })
+          });
+        }
       }
     }
   } catch (e) {
     console.warn('[Users] Could not load users from D1:', e.message || e);
   }
 }
+
 
 async function enterAdminPortal() {
   await loadOptionIni();
@@ -2693,7 +2697,10 @@ function clearReportFilter() {
   renderAdminReport();
 }
 
-function renderAdminUsers() {
+async function renderAdminUsers() {
+  // โหลดข้อมูล users จาก D1 ก่อนแสดงเสมอ (single source of truth)
+  await loadUsersFromCloud();
+
   const tbody = document.getElementById('users-table-body');
   if (!tbody) return;
   tbody.innerHTML = '';
@@ -3252,7 +3259,7 @@ function setupDragAndDrop() {
   setupZone('drop-zone-backup', 'backup-zip-file', 'backup');
 }
 
-// Sync data up to Cloud — ส่งข้อมูลแบบ chunk เพื่อหลีกเลี่ยง "Too many API requests"
+// Sync data up to Cloud — MySQL → db_sync.py → Cloudflare D1 (ตรง ไม่ผ่าน KV)
 async function runCloudSync() {
   const btn = document.querySelector('#scr-sync button.btn-primary');
   const oldText = btn ? btn.innerHTML : '';
@@ -3265,7 +3272,7 @@ async function runCloudSync() {
     return chunks;
   };
 
-  // Helper: POST chunk ไปยัง /api/sync
+  // Helper: POST chunk ไปยัง /api/sync (Cloudflare D1 via Pages Function)
   const postChunk = async (payload) => {
     const res = await fetch('/api/sync', {
       method: 'POST',
@@ -3279,52 +3286,90 @@ async function runCloudSync() {
   };
 
   try {
-    // ดึงข้อมูลล่าสุดจาก KV (ที่ db_sync.py อัปโหลดไว้จาก MySQL จริง)
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังดึงข้อมูลล่าสุดจาก Cloud KV...';
+    // ====================================================================
+    // STEP 0: สั่ง server.py รัน db_sync.py → อ่านจาก MySQL ส่งตรงเข้า D1
+    //         เป็นขั้นตอนแรกสุด ก่อนทำอย่างอื่นทั้งหมด
+    // ====================================================================
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังอ่านข้อมูลจาก MySQL และส่งขึ้น Cloud D1...';
+    let mysqlSyncOk = false;
+    try {
+      const serverRes = await fetch('http://localhost:8000/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mysql_sync' })
+      });
+      if (serverRes.ok) {
+        const serverData = await serverRes.json();
+        if (serverData && serverData.success) {
+          mysqlSyncOk = true;
+          console.log('[CloudSync] db_sync.py ran successfully:', serverData.message || serverData.output || '');
+        } else {
+          console.warn('[CloudSync] db_sync.py returned non-success:', serverData);
+        }
+      } else {
+        console.warn('[CloudSync] server.py /api/sync returned', serverRes.status);
+      }
+    } catch (serverErr) {
+      // ไม่มี server.py ทำงาน หรือเชื่อมต่อ MySQL ไม่ได้
+      console.warn('[CloudSync] Could not reach local server.py:', serverErr.message || serverErr);
+    }
+
+    if (!mysqlSyncOk) {
+      const proceed = confirm(
+        '\u26a0\ufe0f ไม่สามารถเชื่อมต่อ server.py หรือ MySQL ได้\n\n' +
+        'หากต้องการอัปเดตด้วยข้อมูลที่อยู่ใน Browser (local) กด OK\n' +
+        'หรือกด Cancel เพื่อยกเลิก'
+      );
+      if (!proceed) {
+        if (btn) { btn.disabled = false; btn.innerHTML = oldText; }
+        return;
+      }
+    }
+
+    // ====================================================================
+    // STEP 1: โหลดข้อมูลล่าสุดจาก D1 กลับมา refresh local state
+    // ====================================================================
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลดข้อมูลล่าสุดจาก Cloudflare D1...';
     let customers = db.customers || [];
     let tickets   = db.tickets   || [];
     let payments  = db.payments  || [];
 
     try {
-      // ระบุ source=kv เพื่อดึงข้อมูลจริงที่ db_sync.py อัปโหลดขึ้น KV โดยตรง
-      const kvRes = await fetch('/api/sync?source=kv&t=' + Date.now());
-      if (kvRes.ok) {
-        const kvData = await kvRes.json();
-        if (kvData && kvData.tickets && kvData.tickets.length > 0) {
-          tickets   = normalizeKeys(kvData.tickets);
-          customers = normalizeKeys(kvData.customers || []);
-          payments  = normalizeKeys(kvData.payments  || []);
-          // ตัดช่องว่างท้ายชื่อลูกค้าออกอย่างสมบูรณ์
+      const d1Res = await fetch('/api/sync?t=' + Date.now());
+      if (d1Res.ok) {
+        const d1Data = await d1Res.json();
+        if (d1Data && d1Data.tickets && d1Data.tickets.length > 0) {
+          tickets   = normalizeKeys(d1Data.tickets);
+          customers = normalizeKeys(d1Data.customers || []);
+          payments  = normalizeKeys(d1Data.payments  || []);
           customers.forEach(c => {
             if (c.Name) c.Name = String(c.Name).replace(/\s+/g, ' ').trim();
           });
-          // บันทึกลง local db ด้วย
           db.tickets   = tickets;
           db.customers = customers;
           db.payments  = payments;
           saveDBTable('tickets');
           saveDBTable('customers');
           saveDBTable('payments');
-        } else {
-          alert('⚠️ ยังไม่พบข้อมูลตั๋วใน Cloud KV กรุณารันคำสั่ง "python db_sync.py sync" ที่เครื่องแม่เพื่อส่งข้อมูล MySQL ขึ้น Cloud ก่อนครับ');
+          console.log('[CloudSync] Refreshed from D1 — tickets:', tickets.length, 'customers:', customers.length);
         }
       }
-    } catch(e) { console.error('Fetch KV error:', e); }
+    } catch(e) { console.error('[CloudSync] Fetch D1 error:', e); }
 
-    // ส่งข้อมูลขึ้น D1 แบบ chunk (200 records ต่อครั้ง เพื่อความเร็วและไม่เกิน Worker subrequest limit)
+    // ====================================================================
+    // STEP 2: ส่งข้อมูลใน memory ขึ้น D1 เพิ่มเติม (chunk 200 records/ครั้ง)
+    // ====================================================================
     const CHUNK_SIZE = 200;
     const custChunks = chunkArray(customers, CHUNK_SIZE);
     const tickChunks = chunkArray(tickets, CHUNK_SIZE);
     const totalChunks = custChunks.length + tickChunks.length;
     let doneChunks = 0;
 
-    // --- Upload Customers ---
     for (let i = 0; i < custChunks.length; i++) {
       if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ลูกค้า ${Math.min((i+1)*CHUNK_SIZE, customers.length)}/${customers.length} (chunk ${++doneChunks}/${totalChunks})`;
       await postChunk({ customers: custChunks[i], tickets: [], payments: [], sync_time: new Date().toISOString() });
     }
 
-    // --- Upload Tickets ---
     for (let i = 0; i < tickChunks.length; i++) {
       if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ตั๋ว ${Math.min((i+1)*CHUNK_SIZE, tickets.length)}/${tickets.length} (chunk ${++doneChunks}/${totalChunks})`;
       await postChunk({ customers: [], tickets: tickChunks[i], payments: [], sync_time: new Date().toISOString() });
@@ -3332,23 +3377,23 @@ async function runCloudSync() {
 
     // หมายเหตุ: ไม่ sync payments ใน Cloud Sync นี้
     // payments ถูกจัดการโดย /api/payment เมื่อลูกค้าส่งสลิป
-    // เพื่อป้องกันการ overwrite payment ที่รอตรวจสอบอยู่ใน D1
 
-    // บันทึก sync log
     const timestampStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
     db.sync.unshift({
       timestamp: timestampStr,
-      status: 'สำเร็จ (D1)',
+      status: mysqlSyncOk ? 'สำเร็จ (MySQL\u2192D1)' : 'สำเร็จ (Local\u2192D1)',
       count: `ซิงค์สำเร็จ: ${tickets.length} ตั๋ว / ${customers.length} ลูกค้า`
     });
     saveDBTable('sync');
     renderSyncHistory();
     renderAll();
 
-    alert(`✅ ซิงค์ข้อมูลขึ้น Cloud สำเร็จ!\n\n` +
-      `  • ตั๋วจำนำ  : ${tickets.length.toLocaleString()} รายการ\n` +
-      `  • ลูกค้า   : ${customers.length.toLocaleString()} รายการ\n\n` +
-      `ข้อมูลถูกบันทึกเข้า Cloudflare D1 เรียบร้อยแล้ว`);
+    alert(`\u2705 ซิงค์ข้อมูลขึ้น Cloud สำเร็จ!\n\n` +
+      `  \u2022 ตั๋วจำนำ  : ${tickets.length.toLocaleString()} รายการ\n` +
+      `  \u2022 ลูกค้า   : ${customers.length.toLocaleString()} รายการ\n\n` +
+      (mysqlSyncOk
+        ? `ข้อมูลอ่านจาก MySQL และบันทึกเข้า Cloudflare D1 โดยตรงเรียบร้อยแล้ว`
+        : `ข้อมูล (จาก Browser) ถูกบันทึกเข้า Cloudflare D1 เรียบร้อยแล้ว`));
 
   } catch (error) {
     console.error(error);
@@ -3365,6 +3410,7 @@ async function runCloudSync() {
 async function runCloudSyncSimulation() {
   return await runCloudSync();
 }
+
 
 
 // Refresh all visible admin/customer panels after a data sync

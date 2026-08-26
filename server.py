@@ -54,6 +54,13 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        self.end_headers()
+
     def do_POST(self):
         if self.path == '/api/sync':
             try:
@@ -67,29 +74,45 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 cust_exists = os.path.exists(cust_path) or os.path.exists(cust_path + ".MYD") or os.path.exists(cust_path + ".ibd")
                 tick_exists = os.path.exists(tick_path) or os.path.exists(tick_path + ".MYD") or os.path.exists(tick_path + ".ibd")
                 
+                # รัน db_sync.py sync → อ่าน MySQL แล้วส่งตรงเข้า Cloudflare D1
                 script_path = os.path.join(DIRECTORY, "db_sync.py")
-                result = subprocess.run([sys.executable, script_path, "sync"], capture_output=True, text=True, encoding='utf-8', errors='ignore')
+                result = subprocess.run(
+                    [sys.executable, script_path, "sync"],
+                    capture_output=True, text=True, encoding='utf-8', errors='ignore',
+                    timeout=120  # รอได้สูงสุด 2 นาที
+                )
                 
+                sync_ok = result.returncode == 0
                 response_data = {
-                    "success": True,
-                    "message": "ซิงค์ข้อมูลจาก S: เรียบร้อยแล้ว",
+                    "success": sync_ok,
+                    "message": "ซิงค์ข้อมูล MySQL → Cloudflare D1 เรียบร้อยแล้ว" if sync_ok else "db_sync.py ทำงานแต่อาจมีข้อผิดพลาด",
                     "cust_found": cust_exists,
                     "tick_found": tick_exists,
                     "cust_path": cust_path,
                     "tick_path": tick_path,
-                    "output": result.stdout
+                    "output": result.stdout[-3000:] if result.stdout else '',   # ส่งแค่ 3000 ตัวอักษรสุดท้าย
+                    "error_output": result.stderr[-1000:] if result.stderr else ''
                 }
                 
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 self.wfile.write(json.dumps(response_data, ensure_ascii=False).encode('utf-8'))
                 
+            except subprocess.TimeoutExpired:
+                self.send_response(504)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "db_sync.py timeout (>120s)"}, ensure_ascii=False).encode('utf-8'))
             except Exception as e:
                 self.send_response(500)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode('utf-8'))
+
         elif self.path == '/api/config':
             try:
                 content_len = int(self.headers.get('Content-Length', 0))
