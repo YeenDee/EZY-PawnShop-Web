@@ -558,43 +558,20 @@ def upload_to_cloudflare_r2(filename, filepath):
         
     return False, "R2 upload error"
 
-def show_menu():
-    print("==================================================")
-    print(" EZY Pawnshop 2006 CLI Sync Tool (PRODUCTION)")
-    print("==================================================")
-    print("1. ส่งข้อมูลขึ้น Cloud (Sync customer & ticket จริง)")
-    print("2. สำรองข้อมูลขึ้น Cloud (Backup Daily Zip จริง)")
-    print("3. ทำทั้งสองรายการ (Sync & Backup)")
-    print("4. ออกจากโปรแกรม")
-    print("==================================================")
-    
-    choice = input("กรุณาเลือกรายการทำงาน (1-4): ")
-    if choice == '1':
-        run_db_sync(mock_mode=False)
-    elif choice == '2':
-        run_db_backup(mock_mode=False)
-    elif choice == '3':
-        run_db_sync(mock_mode=False)
-        run_db_backup(mock_mode=False)
-    elif choice == '4':
-        print("สวัสดีครับ")
-        sys.exit(0)
-    else:
-        print("[!] ตัวเลือกไม่ถูกต้อง")
-
 if __name__ == '__main__':
-    # Check arguments
-    if len(sys.argv) > 1:
-        cmd = sys.argv[1].lower()
-        if cmd == 'sync':
-            run_db_sync(mock_mode=('--mock' in sys.argv))
-        elif cmd == 'backup':
-            date_arg = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith('--') else None
-            run_db_backup(date_str=date_arg, mock_mode=('--mock' in sys.argv))
-        else:
-            print("คำสั่งที่ใช้งานได้: python db_sync.py [sync|backup] [--mock]")
+    # รัน run_db_sync (choice=1) อัตโนมัติเสมอ ไม่มีเมนู
+    # รองรับ argument เสริม:
+    #   python db_sync.py           → sync จริง (production)
+    #   python db_sync.py sync      → sync จริง (production)
+    #   python db_sync.py --mock    → sync โหมดทดสอบ (mock)
+    #   python db_sync.py backup    → สำรองข้อมูลขึ้น R2
+    mock = '--mock' in sys.argv
+    cmd  = sys.argv[1].lower() if len(sys.argv) > 1 and not sys.argv[1].startswith('--') else 'sync'
+
+    if cmd == 'backup':
+        date_arg = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith('--') else None
+        run_db_backup(date_str=date_arg, mock_mode=mock)
     else:
-        while True:
-            show_menu()
-            input("กด Enter เพื่อกลับสู่เมนูหลัก...")
-            print("\n"*2)
+        # default → sync (choice=1)
+        run_db_sync(mock_mode=mock)
+
