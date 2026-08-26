@@ -78,10 +78,10 @@ def _load_config():
 
     # ── MySQL ───────────────────────────────────────────
     mysql = {
-        'host':     cfg.get('mysql', 'host',     fallback='server'),
-        'user':     cfg.get('mysql', 'user',     fallback='pawnshop_eps'),
-        'password': cfg.get('mysql', 'password', fallback='passeps'),
-        'database': cfg.get('mysql', 'database', fallback='pawnshop'),
+        'host':     cfg.get('mysql', 'host',     fallback=''),
+        'user':     cfg.get('mysql', 'user',     fallback=''),
+        'password': cfg.get('mysql', 'password', fallback=''),
+        'database': cfg.get('mysql', 'database', fallback=''),
     }
 
     # ── Cloudflare ──────────────────────────────────────
@@ -92,9 +92,9 @@ def _load_config():
         'PUT_YOUR_CLOUDFLARE_API_TOKEN_HERE'
     )
     cf = {
-        'account_id':   cfg.get('cloudflare', 'account_id',   fallback='17bdd980316fec191fd0597e89d5afe9').strip(),
+        'account_id':   cfg.get('cloudflare', 'account_id',   fallback='').strip(),
         'api_token':    cf_token,
-        'kv_namespace': cfg.get('cloudflare', 'kv_namespace', fallback='cfdeabd671c94f9bafdbba5b1c41316f').strip(),
+        'kv_namespace': cfg.get('cloudflare', 'kv_namespace', fallback='').strip(),
     }
 
     return mysql, cf

@@ -3285,46 +3285,6 @@ async function runCloudSync() {
     return r;
   };
 
-  try {
-    // ====================================================================
-    // STEP 0: สั่ง server.py รัน db_sync.py → อ่านจาก MySQL ส่งตรงเข้า D1
-    //         เป็นขั้นตอนแรกสุด ก่อนทำอย่างอื่นทั้งหมด
-    // ====================================================================
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังอ่านข้อมูลจาก MySQL และส่งขึ้น Cloud D1...';
-    let mysqlSyncOk = false;
-    try {
-      const serverRes = await fetch('http://localhost:8000/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'mysql_sync' })
-      });
-      if (serverRes.ok) {
-        const serverData = await serverRes.json();
-        if (serverData && serverData.success) {
-          mysqlSyncOk = true;
-          console.log('[CloudSync] db_sync.py ran successfully:', serverData.message || serverData.output || '');
-        } else {
-          console.warn('[CloudSync] db_sync.py returned non-success:', serverData);
-        }
-      } else {
-        console.warn('[CloudSync] server.py /api/sync returned', serverRes.status);
-      }
-    } catch (serverErr) {
-      // ไม่มี server.py ทำงาน หรือเชื่อมต่อ MySQL ไม่ได้
-      console.warn('[CloudSync] Could not reach local server.py:', serverErr.message || serverErr);
-    }
-
-    if (!mysqlSyncOk) {
-      const proceed = confirm(
-        '\u26a0\ufe0f ไม่สามารถเชื่อมต่อ server.py หรือ MySQL ได้\n\n' +
-        'หากต้องการอัปเดตด้วยข้อมูลที่อยู่ใน Browser (local) กด OK\n' +
-        'หรือกด Cancel เพื่อยกเลิก'
-      );
-      if (!proceed) {
-        if (btn) { btn.disabled = false; btn.innerHTML = oldText; }
-        return;
-      }
-    }
 
     // ====================================================================
     // STEP 1: โหลดข้อมูลล่าสุดจาก D1 กลับมา refresh local state
