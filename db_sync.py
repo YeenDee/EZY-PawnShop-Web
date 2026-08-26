@@ -16,12 +16,12 @@ import urllib.error
 import json
 import zipfile
 
-# Bypass SSL verification (แก้ปัญหา Windows SSL Certificate )
+# Bypass SSL verification (แก้ปัญหา Windows SSL Certificate)
 _ssl_ctx = ssl.create_default_context()
 _ssl_ctx.check_hostname = False
 _ssl_ctx.verify_mode = ssl.CERT_NONE
 
-# Custom JSON encoder: แปลง datetime / Decimal / bytes จาก MySQL → string
+# Custom JSON encoder: แปลง datetime / Decimal / bytes จาก MySQL -> string
 class MySQLJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (datetime.datetime, datetime.date)):
@@ -61,23 +61,14 @@ def sanitize_rows(rows):
 
 # ==================== CONFIGURATION ====================
 # MySQL Server Settings (AppServ MySQL 5.0.24a - old_passwords mode)
-# NOTE: MySQL 5.0.24a uses old 16-char password hash by default.
-#       PyMySQL ≥ 1.0 drops old_password auth plugin support.
-#       If connect fails, run this SQL on the server to fix:
-#           SET old_passwords = 0;
-#           SET PASSWORD FOR 'pawnshop_eps'@'%' = PASSWORD('passeps');
-#       Or downgrade PyMySQL: pip install pymysql==0.9.3
 MYSQL_HOST = 'server'
 MYSQL_USER = 'pawnshop_eps'
 MYSQL_PASSWORD = 'passeps'
 MYSQL_DB = 'pawnshop'
 
 # Cloudflare Configuration
-# Email: bigyee999@gmail.com
-# DNS: EZY-Pawnshop2006.rainbow-ocean.site
 CF_ACCOUNT_ID  = '17bdd980316fec191fd0597e89d5afe9'
-# *** API Token: อ่านจากไฟล์ option.ini หรือ Environment Variable ***
-# เพื่อความปลอดภัย ไม่เก็บ token ใน source code
+
 def _load_cf_token():
     # 1. ลองอ่านจาก option.ini
     ini_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'option.ini')
@@ -108,6 +99,34 @@ CF_R2_BUCKET = 'ezy-pawnshop-backups'
 LOCAL_DB_DIR = r"S:\AppServ\MySQL\data\PawnShop" if os.path.exists(r"S:\AppServ\MySQL\data\PawnShop") else (r"D:\AppServ\MySQL\data\PawnShop" if os.path.exists(r"D:\AppServ\MySQL\data\PawnShop") else r"S:\server\AppServ\MySQL\data\Pawnshop")
 LOCAL_BACKUP_DIR = r"S:\Backup" if os.path.exists(r"S:\Backup") else (r"d:\backup" if os.path.exists(r"d:\backup") else r"D:\Backup")
 # =======================================================
+
+def fetch_cloud_config():
+    """ดึงการตั้งค่าจาก Cloudflare D1 /api/config เพื่อไม่ให้ค่า bank_acc_name, bank_name ถูก hardcode ทับ"""
+    endpoints = [
+        "https://EZY-Pawnshop2006.rainbow-ocean.site/api/config",
+        "https://ezy-pawnshop-web.pages.dev/api/config"
+    ]
+    for url in endpoints:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "EZY-PawnShop-Sync/1.0"})
+            with urllib.request.urlopen(req, timeout=10, context=_ssl_ctx) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                if data and data.get('success') and data.get('config'):
+                    cfg = data['config']
+                    print(f"[+] โหลดการตั้งค่าจาก Cloudflare D1 สำเร็จ: {cfg.get('shop_name', '')} ({cfg.get('bank_name', '')})")
+                    return cfg
+        except Exception as e:
+            pass
+    print("[!] ไม่สามารถดึง config จาก Cloudflare ได้ — ใช้ค่ามาตรฐาน")
+    return {
+        "shop_name": "โรงรับจำนำ อีซี่ Pawnshop 2006",
+        "bank_name": "ธนาคารกสิกรไทย",
+        "bank_logo": "KB",
+        "bank_color": "#178e3d",
+        "bank_acc": "026-8-91256-0",
+        "bank_acc_name": "บ. อีซี่ โรงรับจำนำ 2006",
+        "system_id": 3
+    }
 
 def get_mysql_connection(custom_pass=None):
     """Attempts to connect to MySQL database via PyMySQL or mysql.connector."""
@@ -185,10 +204,12 @@ def upload_to_cloudflare_kv(key, data_str):
     return False, "KV upload failed"
 
 
-def upload_chunked_to_pages(customers_data, tickets_data, payments_data):
+def upload_chunked_to_pages(customers_data, tickets_data, payments_data=None):
     """ส่งข้อมูลแบบ chunk เล็กๆ ผ่าน POST /api/sync ไปยัง Pages Function โดยตรง
     แต่ละ chunk มีขนาดไม่เกิน 100 records เพื่อไม่ให้โดน Cloudflare WAF/body size limit"""
-    
+    if payments_data is None:
+        payments_data = []
+        
     CHUNK_SIZE = 100
     endpoints = [
         "https://EZY-Pawnshop2006.rainbow-ocean.site/api/sync",
@@ -249,7 +270,7 @@ def upload_chunked_to_pages(customers_data, tickets_data, payments_data):
             print(f"    [!] chunk ตั๋ว {i}-{i+CHUNK_SIZE} error: {e}")
             return False
     
-    # ส่ง Payments ทีละ chunk
+    # ส่ง Payments ทีละ chunk (ถ้ามี)
     if payments_data:
         for i in range(0, len(payments_data), CHUNK_SIZE):
             chunk = payments_data[i:i+CHUNK_SIZE]
@@ -271,7 +292,6 @@ def run_db_sync(mock_mode=False):
     
     customers_data = []
     tickets_data = []
-    payments_data = []
     
     if not mock_mode:
         conn = get_mysql_connection()
@@ -364,35 +384,6 @@ def run_db_sync(mock_mode=False):
                             customers_data = []
                         print(f"    พบข้อมูลลูกค้าจำนำจำนวน {len(customers_data)} รายการ")
 
-                # Query 3: ดึงข้อมูล payment (bill_stat='9' = รอตรวจสอบ / pending)
-                print("[*] ดึงข้อมูลจากตาราง payment (bill_stat='9' รอตรวจสอบ)...")
-                try:
-                    cursor.execute("""
-                        SELECT
-                            bill_no    AS BillNo,
-                            SystemID   AS SystemID,
-                            bud_year   AS BudYear,
-                            book_no    AS BookNo,
-                            doc_no     AS DocNo,
-                            bill_type  AS BillType,
-                            bill_date  AS BillDate,
-                            slip       AS Slip,
-                            cust_code  AS Id
-                        FROM payment WHERE bill_type = '9'
-                    """)
-                    pay_rows = cursor.fetchall()
-                    if pay_rows and isinstance(pay_rows[0], dict):
-                        payments_data = pay_rows
-                    elif pay_rows and cursor.description:
-                        cols = [d[0] for d in cursor.description]
-                        payments_data = [dict(zip(cols, r)) for r in pay_rows]
-                    else:
-                        payments_data = []
-                    print(f"    พบรายการชำระรอตรวจสอบจำนวน {len(payments_data)} รายการ")
-                except Exception as ep:
-                    print(f"    [INFO] ตาราง payment ไม่พบหรือ error: {ep}")
-                    payments_data = []
-
                 cursor.close()
                 conn.close()
             except Exception as e:
@@ -403,42 +394,21 @@ def run_db_sync(mock_mode=False):
                     print("[!] ยุติการทำงานเนื่องจากเชื่อมต่อฐานข้อมูลจริงไม่ได้ (ใช้ข้อมูลจริงจาก S:\\AppServ\\MySQL\\data\\PawnShop)")
                     return
 
-    #if mock_mode:
-    #    print("[โหมดทดสอบ] กำลังจำลองการอ่านไฟล์ข้อมูลจำลอง (Mock Data):")
-    #    # Simulated Mock Data (เฉพาะเมื่อระบุ --mock)
-    #    customers_data = [
-    #        { "Id": "1-2345-67890-12-3", "Name": "สมชาย ใจดี", "Tel": "0812345678" },
-    #        { "Id": "3-1002-34567-89-0", "Name": "สมศรี มีสุข", "Tel": "0898765432" }
-    #    ]
-    #    tickets_data = [
-    #        { "SystemID": 1, "BudYear": 2569, "BookNo": 1, "DocNo": 1001, "BillStat": "N", "Asstotal": 45000, "Id": "1-2345-67890-12-3", "Model": "สร้อยคอทองคำ 1 บาท" },
-    #        { "SystemID": 1, "BudYear": 2569, "BookNo": 1, "DocNo": 1002, "BillStat": "N", "Asstotal": 20000, "Id": "1-2345-67890-12-3", "Model": "แหวนเพชร 0.5 กะรัต" },
-    #        { "SystemID": 2, "BudYear": 2569, "BookNo": 2, "DocNo": 2001, "BillStat": "N", "Asstotal": 12000, "Id": "3-1002-34567-89-0", "Model": "iPad Air 5" }
-    #    ]
-    #    payments_data = []
-    #    print(f"    [จำลอง] อ่านตั๋วที่มีสถานะ N สำเร็จ: {len(tickets_data)} รายการ")
-    #    print(f"    [จำลอง] อ่านลูกค้าจำนำสำเร็จ: {len(customers_data)} รายการ")
-
     # Construct Cloud Database JSON Payload
-    # Sanitize rows: แปลง datetime / Decimal / bytes → JSON serializable
+    # Sanitize rows: แปลง datetime / Decimal / bytes -> JSON serializable
     tickets_data   = sanitize_rows(tickets_data)
     customers_data = sanitize_rows(customers_data)
-    payments_data  = sanitize_rows(payments_data)
+
+    # อ่าน bank config จาก Cloudflare D1 แทน hardcode
+    # (ป้องกัน bank_acc_name, bank_name ถูก overwrite กลับเป็นค่าเดิมทุกครั้งที่ sync)
+    cloud_config = fetch_cloud_config()
 
     payload = {
         "sync_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "customers": customers_data,
         "tickets": tickets_data,
-        "payments": payments_data,
-        "config": {
-            "shop_name": "โรงรับจำนำ อีซี่ Pawnshop 2006",
-            "bank_name": "ธนาคารกสิกรไทย",
-            "bank_logo": "KB",
-            "bank_color": "#178e3d",
-            "bank_acc": "026-8-91256-0",
-            "bank_acc_name": "บ. อีซี่ โรงรับจำนำ 2006",
-            "system_id": 3
-        },
+        "payments": [],
+        "config": cloud_config,
         "mode": "mock" if mock_mode else "production"
     }
     
@@ -457,16 +427,16 @@ def run_db_sync(mock_mode=False):
     if success:
         print(f"[+] ซิงค์ข้อมูลขึ้น Cloudflare KV สำเร็จ!")
     else:
-        # KV ล้มเหลว (token หมดอายุ/ถูก revoke) → สลับไปใช้ chunked POST ส่งตรงเข้า D1
+        # KV ล้มเหลว (token หมดอายุ/ถูก revoke) -> สลับไปใช้ chunked POST ส่งตรงเข้า D1
         print(f"\n[*] KV ล้มเหลว — สลับไปส่งข้อมูลตรงเข้า Cloudflare D1 แบบ chunk (100 records/chunk)...")
-        success = upload_chunked_to_pages(customers_data, tickets_data, payments_data)
+        success = upload_chunked_to_pages(customers_data, tickets_data, [])
     
     if success:
         print(f"\n{'='*50}")
         print(f"  [OK] ซิงค์ข้อมูลขึ้น Cloudflare สำเร็จ!")
         print(f"  - ตั๋วจำนำ  : {len(tickets_data):,} รายการ")
         print(f"  - ลูกค้า   : {len(customers_data):,} รายการ")
-        print(f"  - การชำระ  : {len(payments_data):,} รายการ")
+        print(f"  (อ่านเฉพาะ customer และ ticket ตามคำสั่ง)")
         print(f"{'='*50}")
         print(f"  ข้อมูลถูกบันทึกเข้า Cloudflare D1 Database เรียบร้อยแล้ว")
         print(f"{'='*50}\n")
@@ -479,11 +449,7 @@ def run_db_sync(mock_mode=False):
         print(f"     แล้วอัปเดตใน option.ini")
         print(f"{'='*50}\n")
 
-    # หมายเหตุ: ไม่ส่ง D1 จาก Python เพราะ:
-    # 1. ข้อมูลขนาดใหญ่ (7,000+ ตั๋ว) ทำให้ Cloudflare Pages Function reject ด้วย 403
-    # 2. KV เป็น cache หลัก - web app จะ sync KV → D1 อัตโนมัติเมื่อกดปุ่มในหน้า Admin
     print("="*50 + "\n")
-
 
 
 def run_db_backup(date_str=None, mock_mode=False):
@@ -588,12 +554,12 @@ def upload_to_cloudflare_r2(filename, filepath):
                     headers={"Content-Type": "application/zip"},
                     method='PUT'
                 )
-                with urllib.request.urlopen(req, timeout=60) as response:
+                with urllib.request.urlopen(req, timeout=60, context=_ssl_ctx) as response:
                     res_text = response.read().decode('utf-8')
                     print(f"[+] อัปโหลดไฟล์ {filename} ขึ้น Cloudflare R2 Bucket สำเร็จ! Response: {res_text}")
                     return True, res_text
             except Exception as e:
-                pass
+                print(f"[!] อัปโหลดไปยัง {url} ไม่สำเร็จ: {e}")
     except Exception as err:
         print(f"[!] เกิดข้อผิดพลาดในการอ่านไฟล์ {filepath}: {err}")
         

@@ -421,13 +421,13 @@ async function syncCurrentStateToCloud(table = null) {
     } else if (table === 'config') {
       payload = { config: db.config, sync_time: new Date().toISOString() };
     } else if (table === 'tickets') {
-      const modifiedTickets = (db.tickets || []).filter(t => t.BillStat === 'N' || t.BillType === '9' || t.BillType === '2');
+      const modifiedTickets = (db.tickets || []).filter(t => t.BillStat === 'N' || t.BillStat === 'I' || t.BillType === '9' || t.BillType === '2');
       payload = { tickets: modifiedTickets, sync_time: new Date().toISOString() };
     } else {
       payload = {
         payments: db.payments,
         config: db.config,
-        tickets: (db.tickets || []).filter(t => t.BillStat === 'N' || t.BillType === '9' || t.BillType === '2'),
+        tickets: (db.tickets || []).filter(t => t.BillStat === 'N' || t.BillStat === 'I' || t.BillType === '9' || t.BillType === '2'),
         sync_time: new Date().toISOString()
       };
     }
@@ -439,7 +439,20 @@ async function syncCurrentStateToCloud(table = null) {
     });
     console.log('[Cloud D1 Sync] Auto-saved to Cloudflare for table:', table || 'all');
   } catch (e) {
-    console.log('[Cloud D1 Sync] Offline mode:', e.message);
+    const errMsg = e && e.message ? e.message : String(e);
+    console.warn('[Cloud D1 Sync] Error (table=' + (table || 'all') + '):', errMsg);
+    // แจ้ง admin ว่า sync ไม่สำเร็จ (เฉพาะถ้าเป็น admin portal)
+    if (state.userRole === 'admin') {
+      const existing = document.getElementById('_sync_error_toast');
+      if (!existing) {
+        const toast = document.createElement('div');
+        toast.id = '_sync_error_toast';
+        toast.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#c0392b;color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:90vw;text-align:center;';
+        toast.innerHTML = '⚠️ ซิงค์ข้อมูลขึ้น Cloud ไม่สำเร็จ: ' + errMsg;
+        document.body.appendChild(toast);
+        setTimeout(() => { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 5000);
+      }
+    }
   }
 }
 
@@ -567,14 +580,34 @@ async function handleLogin() {
   
   errorEl.classList.add('hidden');
 
-  // 1. First check if Admin / Staff
+  // 1. First check if Admin / Staff via Cloudflare D1 /api/users
   const plainId = inputId.replace(/-/g, ''); // UserID normalized
-  const user = db.users.find(u => {
-    const normalizedDbId = u.UserID.replace(/-/g, '');
-    return normalizedDbId === plainId && u.Password === inputContact;
+  try {
+    const userRes = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'login', user_id: plainId, password: inputContact })
+    });
+    if (userRes.ok) {
+      const userData = await userRes.json();
+      if (userData && userData.success && userData.user) {
+        state.currentUser = userData.user;
+        state.userRole = 'admin';
+        triggerOtpFlow('System Admin SMS');
+        return;
+      }
+    }
+  } catch (adminErr) {
+    console.warn('[Admin Login] /api/users cloud check error:', adminErr.message || adminErr);
+  }
+
+  // Local fallback for Admin / Staff
+  const localUser = (db.users || []).find(u => {
+    const normalizedDbId = String(u.UserID || '').replace(/-/g, '');
+    return normalizedDbId === plainId && String(u.Password || '') === inputContact;
   });
-  if (user) {
-    state.currentUser = user;
+  if (localUser) {
+    state.currentUser = localUser;
     state.userRole = 'admin';
     triggerOtpFlow('System Admin SMS');
     return;
@@ -616,7 +649,13 @@ async function handleLogin() {
       }
     }
   } catch (err) {
-    console.warn('Online cloud login error, checking local/synced db:', err);
+    // Cloud API ล้มเหลว (offline / network error) → แจ้งเตือนผู้ใช้ทันที
+    if (loginBtn) { loginBtn.disabled = false; loginBtn.innerHTML = originalBtnText; }
+    const isNetErr = err && (err.message || '').toLowerCase().includes('fetch') || err instanceof TypeError;
+    errorEl.innerText = '⚠️ เครือข่าย Network ขัดข้อง กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต แล้วลองใหม่อีกครั้ง';
+    errorEl.classList.remove('hidden');
+    console.warn('[Login] Cloud API error:', err && err.message ? err.message : String(err));
+    return;
   }
 
   // 2.2 Fallback: Ensure Cloud Data is loaded in memory and search
@@ -900,10 +939,17 @@ function calculateActiveInterest(ticket) {
 
 function isTicketOfCustomer(t, user) {
   if (!t || !user) return false;
-  if (user.CustCode && t.CustCode && String(t.CustCode) === String(user.CustCode)) return true;
-  if (user.Id && t.Id && String(t.Id) === String(user.Id)) return true;
-  if (user.CustCode && t.Id && String(t.Id) === String(user.CustCode)) return true;
-  if (user.Id && t.CustCode && String(t.CustCode) === String(user.Id)) return true;
+  const userCustCode = String(user.CustCode || user.cust_code || '').trim();
+  const userId = String(user.Id || user.id || '').trim();
+  const ticketCustCode = String(t.CustCode || t.cust_code || '').trim();
+  const ticketId = String(t.Id || t.id || '').trim();
+
+  // 1. Primary Mapping: customer.cust_code = ticket.cust_code
+  if (userCustCode && ticketCustCode && userCustCode === ticketCustCode) return true;
+  // 2. Fallback Mapping: match by Id (card_no) or cross-match
+  if (userId && ticketId && userId === ticketId) return true;
+  if (userCustCode && ticketId && userCustCode === ticketId) return true;
+  if (userId && ticketCustCode && userId === ticketCustCode) return true;
   return false;
 }
 
@@ -1379,28 +1425,49 @@ async function _doSubmitPayment() {
     formattedDate = `${now.getFullYear()}/${pad2(now.getMonth()+1)}/${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:00`;
   }
   
-  // Generate BillNo: O + YYMMDD - Sequence(4 digits)
+  // Generate BillNo: ดึงจาก Cloudflare server (/api/billseq) เพื่อป้องกัน Race Condition
+  // หาก offline → fallback คำนวณจาก localStorage (พฤติกรรมเดิม)
   const today = new Date();
   const pad2 = (n) => String(n).padStart(2, '0');
   const year2 = String(today.getFullYear()).substring(2);
   const month2 = pad2(today.getMonth() + 1);
   const date2 = pad2(today.getDate());
   const prefix = `O${year2}${month2}${date2}`;
-  
-  // Calculate increment number safely by max existing sequence for prefix
-  let maxSeq = 0;
-  if (!Array.isArray(db.payments)) db.payments = [];
-  (db.payments || []).forEach(p => {
-    if (p && p.BillNo && String(p.BillNo).startsWith(prefix)) {
-      const parts = String(p.BillNo).split('-');
-      if (parts.length === 2) {
-        const num = parseInt(parts[1], 10);
-        if (!isNaN(num) && num > maxSeq) maxSeq = num;
+
+  let billNo = '';
+  try {
+    const seqRes = await fetch('/api/billseq', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prefix })
+    });
+    if (seqRes.ok) {
+      const seqData = await seqRes.json();
+      if (seqData && seqData.success && seqData.bill_no) {
+        billNo = seqData.bill_no;
+        console.log('[BillNo] Server-side sequence:', billNo);
       }
     }
-  });
-  const seqNum = maxSeq + 1;
-  const billNo = `${prefix}-${String(seqNum).padStart(4, '0')}`;
+  } catch (seqErr) {
+    console.warn('[BillNo] /api/billseq failed, fallback to local sequence:', seqErr.message);
+  }
+
+  // Fallback: นับจาก localStorage ถ้า server ไม่ตอบ
+  if (!billNo) {
+    let maxSeq = 0;
+    if (!Array.isArray(db.payments)) db.payments = [];
+    (db.payments || []).forEach(p => {
+      if (p && p.BillNo && String(p.BillNo).startsWith(prefix)) {
+        const parts = String(p.BillNo).split('-');
+        if (parts.length === 2) {
+          const num = parseInt(parts[1], 10);
+          if (!isNaN(num) && num > maxSeq) maxSeq = num;
+        }
+      }
+    });
+    billNo = `${prefix}-${String(maxSeq + 1).padStart(4, '0')}`;
+    console.warn('[BillNo] Using local fallback sequence:', billNo);
+  }
   
   const currentCustId = (state.currentUser && (state.currentUser.Id || state.currentUser.id || state.currentUser.CustCode)) 
     ? String(state.currentUser.Id || state.currentUser.id || state.currentUser.CustCode) 
@@ -1418,7 +1485,7 @@ async function _doSubmitPayment() {
       ticket.Totalint = calc.interestAmount; // Update to the calculated interest
       ticket.MonthTotal = calc.months; // Update to the calculated months
       
-      // 2. Create payment receipt entry
+      // 2. Create payment record — Slip เก็บเป็น path (base64 ส่งแค่ไปยัง API เท่านั้น)
       const newPay = {
         BillNo: billNo,
         SystemID: String(ticket.SystemID || ''),
@@ -1427,7 +1494,7 @@ async function _doSubmitPayment() {
         DocNo: String(ticket.DocNo || ''),
         BillType: '9', // รออนุมัติ/ยืนยันการชำระ
         BillDate: formattedDate,
-        Slip: state.selectedSlipBase64,
+        Slip: '',  // จะอัปเดตเป็น path ("/Slip/BillNo.jpg") หลังจาก server ตอบกลับ
         Id: currentCustId || String(ticket.Id || '')
       };
       
@@ -1443,7 +1510,11 @@ async function _doSubmitPayment() {
   const submittedTickets = state.selectedTickets.map(item => {
     return (db.tickets || []).find(t => Number(t.DocNo) === Number(item.docNo) && Number(t.BookNo) === Number(item.bookNo));
   }).filter(Boolean);
-  const newPayments = (db.payments || []).filter(p => p.BillNo === billNo);
+  // ส่ง base64 Slip ไปยัง API เพื่อ upload R2 (ไม่เก็บ base64 ใน localStorage)
+  const newPayments = (db.payments || []).filter(p => p.BillNo === billNo).map(p => ({
+    ...p,
+    Slip: state.selectedSlipBase64  // ส่ง base64 ไปยัง server เพื่ออัปโหลด R2
+  }));
 
   // Send to Cloudflare and wait for response — show error if failed
   let cloudOk = false;
@@ -1458,11 +1529,24 @@ async function _doSubmitPayment() {
 
     if (res.ok) {
       cloudOk = true;
+      const resData = await res.json();
+      // อัปเดต Slip field ใน localStorage ให้เป็น path ที่ server คืนมา
+      const returnedSlipUrl = resData.slip_url || '';
+      if (returnedSlipUrl) {
+        (db.payments || []).forEach(p => {
+          if (p.BillNo === billNo) p.Slip = returnedSlipUrl;
+        });
+        safeSetLocalStorage('pawn_payments', db.payments);
+      }
+      // แจ้งเตือนถ้า R2 upload มีปัญหา
+      if (resData.r2_warning) {
+        console.warn('[Payment] R2 warning:', resData.r2_warning);
+      }
       // Also push to /api/sync in background (non-blocking)
       fetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payments: newPayments, tickets: submittedTickets })
+        body: JSON.stringify({ payments: newPayments.map(p => ({...p, Slip: returnedSlipUrl || ''})), tickets: submittedTickets })
       }).catch(() => {});
     } else {
       cloudErrorCode = `HTTP ${res.status} ${res.statusText}`;
@@ -1580,8 +1664,33 @@ async function loadOptionIni() {
   }
 }
 
+async function loadUsersFromCloud() {
+  try {
+    const res = await fetch('/api/users?t=' + Date.now());
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success && Array.isArray(data.users) && data.users.length > 0) {
+        const cloudUsers = normalizeKeys(data.users);
+        cloudUsers.forEach(cu => {
+          const idx = (db.users || []).findIndex(lu => String(lu.UserID).toLowerCase() === String(cu.UserID).toLowerCase());
+          if (idx > -1) {
+            db.users[idx] = { ...db.users[idx], ...cu, Password: cu.Password || db.users[idx].Password };
+          } else {
+            db.users.push(cu);
+          }
+        });
+        safeSetLocalStorage('pawn_users', db.users);
+        console.log('[Users] Loaded users from Cloudflare D1:', db.users.length);
+      }
+    }
+  } catch (e) {
+    console.warn('[Users] Could not load users from D1:', e.message || e);
+  }
+}
+
 async function enterAdminPortal() {
   await loadOptionIni();
+  try { await loadUsersFromCloud(); } catch(e) {}
   
   if (state.sysGov === 1) {
     db.config.system_id = 1;
@@ -2244,6 +2353,9 @@ function batchApprovePayments() {
   }
   
   if (confirm(`คุณต้องการอนุมัติรายการชำระดอกเบี้ยที่เลือกทั้งหมด ${selectedBills.length} รายการ หรือไม่?`)) {
+    // คำนวณ maxDocNo ครั้งเดียวก่อน loop เพื่อป้องกัน DocNo ซ้ำกัน
+    let nextDocNo = db.tickets.reduce((max, t) => Math.max(max, Number(t.DocNo) || 0), 0) + 1;
+
     selectedBills.forEach(key => {
       const parts = key.split('_');
       if (parts.length < 4) return;
@@ -2291,7 +2403,7 @@ function batchApprovePayments() {
             SystemID: ticket.SystemID,
             BudYear: ticket.BudYear,
             BookNo: ticket.BookNo,
-            DocNo: maxDocNo + 1,
+            DocNo: nextDocNo++,  // ใช้ nextDocNo ที่นับจาก pre-loop แล้ว increment
             BillType: '',
             BillDate: '',
             BillNo: '',
@@ -2688,7 +2800,20 @@ function saveUserCrud() {
     }
   }
   
+  // บันทึก localStorage
   saveDBTable('users');
+
+  // Sync ขึ้น Cloudflare D1 (/api/users)
+  const userToSave = db.users.find(u => u.UserID === userId) || { UserID: userId, Password: pass, Name: name, Position: pos };
+  fetch('/api/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'upsert', user: userToSave })
+  }).then(r => r.json()).then(d => {
+    if (d.success) console.log('[Users] Synced to Cloudflare D1:', userId);
+    else console.warn('[Users] Cloud sync warning:', d.error);
+  }).catch(e => console.warn('[Users] Cloud sync error:', e.message));
+
   renderAdminUsers();
   closeUserCrudModal();
   alert('บันทึกข้อมูลผู้ใช้งานระบบเสร็จสิ้น!');
@@ -2700,11 +2825,23 @@ function deleteUser(userId) {
     if (idx !== -1) {
       db.users.splice(idx, 1);
       saveDBTable('users');
+
+      // Sync การลบขึ้น Cloudflare D1
+      fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', user_id: userId })
+      }).then(r => r.json()).then(d => {
+        if (d.success) console.log('[Users] Deleted from Cloudflare D1:', userId);
+        else console.warn('[Users] Cloud delete warning:', d.error);
+      }).catch(e => console.warn('[Users] Cloud delete error:', e.message));
+
       renderAdminUsers();
       alert('ลบผู้ใช้งานเรียบร้อยแล้ว!');
     }
   }
 }
+
 
 // ==================== 4.5 SYSTEM SETTINGS LOGIC (BANK INFO & POSITIONS CRUD) ====================
 function renderAdminSettings() {
@@ -3193,20 +3330,16 @@ async function runCloudSync() {
       await postChunk({ customers: [], tickets: tickChunks[i], payments: [], sync_time: new Date().toISOString() });
     }
 
-    // --- Upload Payments (ถ้ามี) ---
-    if (payments.length > 0) {
-      if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> กำลังส่งการชำระ ${payments.length} รายการ...`;
-      for (const chunk of chunkArray(payments, CHUNK_SIZE)) {
-        await postChunk({ customers: [], tickets: [], payments: chunk, sync_time: new Date().toISOString() });
-      }
-    }
+    // หมายเหตุ: ไม่ sync payments ใน Cloud Sync นี้
+    // payments ถูกจัดการโดย /api/payment เมื่อลูกค้าส่งสลิป
+    // เพื่อป้องกันการ overwrite payment ที่รอตรวจสอบอยู่ใน D1
 
     // บันทึก sync log
     const timestampStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
     db.sync.unshift({
       timestamp: timestampStr,
-      status: 'สำเร็จ (D1 + KV)',
-      count: `ซิงค์สำเร็จ: ${tickets.length} ตั๋ว / ${customers.length} ลูกค้า / ${payments.length} การชำระ`
+      status: 'สำเร็จ (D1)',
+      count: `ซิงค์สำเร็จ: ${tickets.length} ตั๋ว / ${customers.length} ลูกค้า`
     });
     saveDBTable('sync');
     renderSyncHistory();
@@ -3214,9 +3347,8 @@ async function runCloudSync() {
 
     alert(`✅ ซิงค์ข้อมูลขึ้น Cloud สำเร็จ!\n\n` +
       `  • ตั๋วจำนำ  : ${tickets.length.toLocaleString()} รายการ\n` +
-      `  • ลูกค้า   : ${customers.length.toLocaleString()} รายการ\n` +
-      `  • การชำระ  : ${payments.length.toLocaleString()} รายการ\n\n` +
-      `ข้อมูลถูกบันทึกเข้า Cloudflare D1 + KV เรียบร้อยแล้ว`);
+      `  • ลูกค้า   : ${customers.length.toLocaleString()} รายการ\n\n` +
+      `ข้อมูลถูกบันทึกเข้า Cloudflare D1 เรียบร้อยแล้ว`);
 
   } catch (error) {
     console.error(error);

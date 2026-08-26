@@ -50,7 +50,7 @@ export async function onRequest(context) {
           if (phoneValid) {
             // Query tickets for this customer
             const { results: tickets } = await env.DB.prepare(`
-              SELECT system_id as SystemID, bud_year as BudYear, book_no as BookNo, doc_no as DocNo, bill_stat as BillStat, asstotal as Asstotal, month_total as MonthTotal, month_int as MonthInt, totalint as Totalint, app_date as AppDate, exp_date as ExpDate, model as Model, id as Id, cust_code as CustCode
+              SELECT system_id as SystemID, bud_year as BudYear, book_no as BookNo, doc_no as DocNo, bill_stat as BillStat, bill_type as BillType, bill_date as BillDate, bill_no as BillNo, asstotal as Asstotal, month_total as MonthTotal, month_int as MonthInt, totalint as Totalint, app_date as AppDate, exp_date as ExpDate, model as Model, id as Id, cust_code as CustCode
               FROM tickets
               WHERE id = ? OR cust_code = ? OR replace(id, '-', '') = ? OR replace(cust_code, '-', '') = ?
             `).bind(customer.Id, customer.CustCode || customer.Id, plainId, plainId).all();

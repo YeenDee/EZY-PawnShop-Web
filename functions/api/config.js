@@ -40,7 +40,7 @@ export async function onRequest(context) {
             });
           }
         }
-      } catch(e) {}
+      } catch(e) { console.error('[config] KV GET error:', e.message || e); }
     }
     return new Response(JSON.stringify({ success: true, config }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -71,7 +71,7 @@ export async function onRequest(context) {
           if (raw) { try { prev = JSON.parse(raw); } catch(e){} }
           prev.config = { ...(prev.config || {}), ...cfg };
           await env.PAWNSHOP_KV.put('db_sync_latest', JSON.stringify(prev));
-        } catch(e) {}
+        } catch(e) { console.error('[config] KV POST error:', e.message || e); }
       }
 
       return new Response(JSON.stringify({ success: true, message: 'บันทึกการตั้งค่าขึ้น Cloudflare สำเร็จ' }), {

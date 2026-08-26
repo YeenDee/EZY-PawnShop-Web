@@ -37,11 +37,13 @@ export async function onRequest(context) {
 
       const mainBillNo = String(payments[0].BillNo || payments[0].bill_no || '');
 
-      // Helper to process slip image (upload to R2 if base64, store path URL)
+      // processSlip: อัปโหลด base64 ขึ้น R2, คืน path URL ("/Slip/BillNo.jpg")
+      // ถ้า R2 upload ล้มเหลว → คืน '' และ set r2Warning เพื่อแจ้ง client
+      let r2Warning = null;
       async function processSlip(p, bno) {
         let rawSlip = String(p.Slip || p.slip || '');
         if (!rawSlip || rawSlip.length < 200) {
-          return rawSlip; // Already a URL or empty
+          return rawSlip; // Already a path URL or empty
         }
         const pathUrl = `/Slip/${bno}.jpg`;
         if (env.SLIP_BUCKET) {
@@ -61,11 +63,16 @@ export async function onRequest(context) {
               httpMetadata: { contentType }
             });
             console.log(`[payment] Saved slip for ${bno} to R2 (Slip/${bno}.jpg)`);
+            return pathUrl;
           } catch (r2Err) {
-            console.error(`[payment] R2 Upload Error for ${bno}:`, r2Err);
+            // R2 upload failed → return empty, set warning (D1 will store '' instead of wrong path)
+            const errMsg = r2Err.message || String(r2Err);
+            console.error(`[payment] R2 Upload Error for ${bno}: ${errMsg}`);
+            r2Warning = `R2 upload failed for ${bno}: ${errMsg}`;
+            return ''; // ไม่คืน pathUrl เพราะไฟล์ไม่ได้ถูกอัปโหลดจริง
           }
         }
-        return pathUrl;
+        return ''; // No R2 bucket binding
       }
 
       let d1Error = null;
@@ -174,15 +181,28 @@ export async function onRequest(context) {
         }
       }
 
+      // Collect slip URLs per billNo to return to client
+      const slipUrls = {};
+      for (const p of payments) {
+        const bno = String(p.BillNo || p.bill_no || '');
+        if (bno) {
+          slipUrls[bno] = `/Slip/${bno}.jpg`;
+        }
+      }
+
       return new Response(JSON.stringify({
         success: !d1Error,
         message: d1Error
           ? `เกิดข้อผิดพลาดในการบันทึก D1 Database: ${d1Error}`
           : `บันทึกรายการชำระเงิน ${mainBillNo} (${payments.length} รายการ) ขึ้น Cloudflare สำเร็จ`,
         bill_no: mainBillNo,
+        // slip_url: path ของรูปสลิปใน R2 ให้ client อัปเดต Slip field ใน localStorage
+        slip_url: r2Warning ? '' : `/Slip/${mainBillNo}.jpg`,
+        slip_urls: r2Warning ? {} : slipUrls,
         count: payments.length,
         d1_error: d1Error || undefined,
-        kv_warning: kvError ? `KV sync warning: ${kvError}` : undefined
+        kv_warning: kvError ? `KV sync warning: ${kvError}` : undefined,
+        r2_warning: r2Warning || undefined
       }), {
         status: d1Error ? 500 : 200,
         headers: { 'Content-Type': 'application/json', ...corsHeaders }

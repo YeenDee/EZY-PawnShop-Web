@@ -338,6 +338,7 @@ export async function onRequest(context) {
 
           if (!sysId || !docNo) continue;
 
+
           tickStmts.push(
             env.DB.prepare(`
               INSERT INTO tickets
@@ -366,20 +367,21 @@ export async function onRequest(context) {
 
               ON CONFLICT(system_id, bud_year, book_no, doc_no)
               DO UPDATE SET
-
-                bill_stat = excluded.bill_stat,
-                bill_type = excluded.bill_type,
-                bill_date = excluded.bill_date,
-                bill_no = excluded.bill_no,
-                asstotal = excluded.asstotal,
+                -- ป้องกัน: ถ้า bill_stat เป็น '9' (รอตรวจ), '2' (อนุมัติ), 'I' (ต่อแล้ว)
+                -- ห้าม overwrite ด้วยข้อมูลเก่าจาก MySQL (bill_stat='N')
+                bill_stat   = CASE WHEN bill_stat IN ('9','2','I') THEN bill_stat ELSE excluded.bill_stat END,
+                bill_type   = CASE WHEN bill_stat IN ('9','2','I') THEN bill_type ELSE excluded.bill_type END,
+                bill_date   = CASE WHEN bill_stat IN ('9','2','I') THEN bill_date ELSE excluded.bill_date END,
+                bill_no     = CASE WHEN bill_stat IN ('9','2','I') THEN bill_no   ELSE excluded.bill_no   END,
+                asstotal    = excluded.asstotal,
                 month_total = excluded.month_total,
-                month_int = excluded.month_int,
-                totalint = excluded.totalint,
-                app_date = excluded.app_date,
-                exp_date = excluded.exp_date,
-                model = excluded.model,
-                id = excluded.id,
-                cust_code = excluded.cust_code
+                month_int   = excluded.month_int,
+                totalint    = excluded.totalint,
+                app_date    = excluded.app_date,
+                exp_date    = excluded.exp_date,
+                model       = excluded.model,
+                id          = excluded.id,
+                cust_code   = excluded.cust_code
             `).bind(
               sysId,
               budYr,
