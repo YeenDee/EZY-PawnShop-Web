@@ -60,45 +60,73 @@ def sanitize_rows(rows):
     return result
 
 # ==================== CONFIGURATION ====================
-# MySQL Server Settings (AppServ MySQL 5.0.24a - old_passwords mode)
-MYSQL_HOST = 'server'
-MYSQL_USER = 'pawnshop_eps'
-MYSQL_PASSWORD = 'passeps'
-MYSQL_DB = 'pawnshop'
+import configparser as _cp
 
-# Cloudflare Configuration
-CF_ACCOUNT_ID  = '17bdd980316fec191fd0597e89d5afe9'
-
-def _load_cf_token():
-    # 1. ลองอ่านจาก option.ini
+def _load_config():
+    """อ่านค่า config ทั้งหมดจาก option.ini (MySQL + Cloudflare)
+    ถ้าไม่มีไฟล์หรือไม่มี key จะใช้ค่า fallback ที่กำหนดไว้"""
     ini_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'option.ini')
+    cfg = _cp.ConfigParser()
     if os.path.exists(ini_path):
         try:
-            import configparser
-            cfg = configparser.ConfigParser()
             cfg.read(ini_path, encoding='utf-8')
-            tok = cfg.get('cloudflare', 'api_token', fallback=None) or \
-                  cfg.get('DEFAULT', 'CF_API_TOKEN', fallback=None)
-            if tok and tok.strip():
-                return tok.strip()
-        except Exception:
-            pass
-    # 2. ลองอ่านจาก Environment Variable
-    tok = os.environ.get('CF_API_TOKEN', '')
-    if tok:
-        return tok
-    # 3. Fallback: ใส่ token ตรงนี้ (ถ้าไม่ต้องการใช้ config file)
-    return 'PUT_YOUR_CLOUDFLARE_API_TOKEN_HERE'
+            print(f"[*] โหลด config จาก: {ini_path}")
+        except Exception as e:
+            print(f"[!] อ่าน option.ini ไม่ได้: {e} — ใช้ค่า default")
+    else:
+        print(f"[!] ไม่พบ option.ini ที่ {ini_path} — ใช้ค่า default")
 
-CF_API_TOKEN   = _load_cf_token()
-CF_KV_NAMESPACE = 'cfdeabd671c94f9bafdbba5b1c41316f'
-CF_R2_ENDPOINT = f'https://{CF_ACCOUNT_ID}.r2.cloudflarestorage.com'
-CF_R2_BUCKET = 'ezy-pawnshop-backups'
+    # ── MySQL ───────────────────────────────────────────
+    mysql = {
+        'host':     cfg.get('mysql', 'host',     fallback='server'),
+        'user':     cfg.get('mysql', 'user',     fallback='pawnshop_eps'),
+        'password': cfg.get('mysql', 'password', fallback='passeps'),
+        'database': cfg.get('mysql', 'database', fallback='pawnshop'),
+    }
+
+    # ── Cloudflare ──────────────────────────────────────
+    # ลำดับการอ่าน token: option.ini → Environment Variable → fallback
+    cf_token = (
+        cfg.get('cloudflare', 'api_token',  fallback='').strip() or
+        os.environ.get('CF_API_TOKEN', '').strip() or
+        'PUT_YOUR_CLOUDFLARE_API_TOKEN_HERE'
+    )
+    cf = {
+        'account_id':   cfg.get('cloudflare', 'account_id',   fallback='17bdd980316fec191fd0597e89d5afe9').strip(),
+        'api_token':    cf_token,
+        'kv_namespace': cfg.get('cloudflare', 'kv_namespace', fallback='cfdeabd671c94f9bafdbba5b1c41316f').strip(),
+    }
+
+    return mysql, cf
+
+_MYSQL_CFG, _CF_CFG = _load_config()
+
+# MySQL Server Settings — อ่านจาก option.ini [mysql]
+MYSQL_HOST     = _MYSQL_CFG['host']
+MYSQL_USER     = _MYSQL_CFG['user']
+MYSQL_PASSWORD = _MYSQL_CFG['password']
+MYSQL_DB       = _MYSQL_CFG['database']
+
+# Cloudflare Configuration — อ่านจาก option.ini [cloudflare]
+CF_ACCOUNT_ID   = _CF_CFG['account_id']
+CF_API_TOKEN    = _CF_CFG['api_token']
+CF_KV_NAMESPACE = _CF_CFG['kv_namespace']
+CF_R2_ENDPOINT  = f'https://{CF_ACCOUNT_ID}.r2.cloudflarestorage.com'
+CF_R2_BUCKET    = 'ezy-pawnshop-backups'
 
 # Local System Paths
-LOCAL_DB_DIR = r"S:\AppServ\MySQL\data\PawnShop" if os.path.exists(r"S:\AppServ\MySQL\data\PawnShop") else (r"D:\AppServ\MySQL\data\PawnShop" if os.path.exists(r"D:\AppServ\MySQL\data\PawnShop") else r"S:\server\AppServ\MySQL\data\Pawnshop")
-LOCAL_BACKUP_DIR = r"S:\Backup" if os.path.exists(r"S:\Backup") else (r"d:\backup" if os.path.exists(r"d:\backup") else r"D:\Backup")
+LOCAL_DB_DIR = (
+    r"S:\AppServ\MySQL\data\PawnShop"     if os.path.exists(r"S:\AppServ\MySQL\data\PawnShop") else
+    r"D:\AppServ\MySQL\data\PawnShop"     if os.path.exists(r"D:\AppServ\MySQL\data\PawnShop") else
+    r"S:\server\AppServ\MySQL\data\Pawnshop"
+)
+LOCAL_BACKUP_DIR = (
+    r"S:\Backup" if os.path.exists(r"S:\Backup") else
+    r"d:\backup" if os.path.exists(r"d:\backup") else
+    r"D:\Backup"
+)
 # =======================================================
+
 
 def fetch_cloud_config():
     """ดึงการตั้งค่าจาก Cloudflare D1 /api/config เพื่อไม่ให้ค่า bank_acc_name, bank_name ถูก hardcode ทับ"""
