@@ -3319,6 +3319,17 @@ function handleFileSelect(input, type) {
 function handleBackupFileSelect(input) {
   const file = input.files[0];
   if (file) {
+    const fn = file.name.toLowerCase();
+    if (!fn.endsWith('.zip') && !fn.endsWith('.rar')) {
+      alert('⚠️ กรุณาเลือกไฟล์สำรองข้อมูลนามสกุล .zip หรือ .rar เท่านั้น');
+      input.value = '';
+      state.uploadedBackupFile = null;
+      const display = document.getElementById('backup-file-name');
+      if (display) display.innerText = '';
+      const btn = document.getElementById('btn-backup-upload');
+      if (btn) { btn.disabled = true; btn.style.opacity = '0.4'; btn.style.cursor = 'not-allowed'; }
+      return;
+    }
     state.uploadedBackupFile = file;
     const display = document.getElementById('backup-file-name');
     if (display) display.innerText = `✅ เลือกไฟล์สำเร็จ: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`;
@@ -3519,7 +3530,7 @@ function renderSyncHistory() {
 async function runCloudBackup() {
   // Guard: ต้องเลือกไฟล์ก่อน
   if (!state.uploadedBackupFile) {
-    alert('กรุณาแตะกรอบเพื่อเลือกไฟล์ .zip จากไดรฟ์ S:\\Backup ก่อน');
+    alert('กรุณาแตะกรอบเพื่อเลือกไฟล์ .zip หรือ .rar จากไดรฟ์ S:\\Backup ก่อน');
     return;
   }
   
@@ -3528,18 +3539,21 @@ async function runCloudBackup() {
   if (btn) {
     btn.disabled = true;
     btn.style.opacity = '0.6';
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลด ZIP สำรองไปยัง Cloudflare R2...';
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลดไฟล์สำรองไปยัง Cloudflare R2...';
   }
   
   const file = state.uploadedBackupFile;
   const fileName = file.name;
+  const isRar = fileName.toLowerCase().endsWith('.rar');
+  const contentType = isRar ? 'application/x-rar-compressed' : 'application/zip';
   
   try {
-    // ส่งไฟล์ zip จริงไปยัง R2 API endpoint (/api/backup/:filename)
+    // ส่งไฟล์ zip/rar จริงไปยัง R2 API endpoint (/api/backup/:filename)
     const response = await fetch('/api/backup/' + encodeURIComponent(fileName), {
       method: 'PUT',
       headers: {
-        'Content-Type': 'application/zip'
+        'Content-Type': contentType,
+        'X-Filename': encodeURIComponent(fileName)
       },
       body: file
     });
@@ -3566,7 +3580,7 @@ async function runCloudBackup() {
       const fnDisplay = document.getElementById('backup-file-name');
       if (fnDisplay) fnDisplay.innerText = '';
       
-      alert(`✅ สำรองข้อมูล zip ประจำวัน "${fileName}" ขึ้น Cloudflare R2 สำเร็จเรียบร้อย!`);
+      alert(`✅ สำรองข้อมูลประจำวัน "${fileName}" ขึ้น Cloudflare R2 สำเร็จเรียบร้อย!`);
     } else {
       throw new Error(result.error || `HTTP Status ${response.status}`);
     }

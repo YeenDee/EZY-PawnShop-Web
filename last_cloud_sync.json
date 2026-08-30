@@ -1,5 +1,5 @@
 {
-  "sync_time": "2026-08-26 20:25:50",
+  "sync_time": "2026-08-30 20:29:15",
   "customers": [
     {
       "Id": "1100200675394",
@@ -18861,13 +18861,14 @@
     "shop_name": "EZY Pawnshop 2006",
     "bank_name": "ธนาคารออมสิน",
     "bank_logo": "logobank.jpg",
-    "bank_color": "#2CC3F1",
+    "bank_color": "#EF3C97",
     "bank_acc": "026-8-91256-0",
     "bank_acc_name": "โรงรับจำนำทรัพย์ชวนชม",
     "system_id": "3",
-    "runno_O260826": "1",
     "runno": "1",
-    "last_bill_no": "O260826-0001"
+    "runno_O260826": "1",
+    "last_bill_no": "O260830-0001",
+    "runno_O260830": "1"
   },
   "mode": "production"
 }

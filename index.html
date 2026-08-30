@@ -642,16 +642,16 @@
           <div class="card">
             <h3 style="font-size: 16px; margin-bottom: 8px;"><i class="fa-solid fa-file-zipper"></i> สำรองข้อมูลประจำวันขึ้น Cloud</h3>
             <p style="font-size: 13px; color: var(--text-medium); margin-bottom: 16px;">
-              อัปโหลดไฟล์สำรองข้อมูล zip ที่เกิดจากการสำรองบนแอปพลิเคชันหลักของเครื่องโลคอล ในพาธ <code style="background-color: var(--bg-gray); padding: 2px 6px; border-radius: 4px; font-weight: bold; color: var(--primary-red);">S:\Backup\pawnshop_yyyy-mm-dd.zip</code> เพื่อเก็บความปลอดภัยภายนอกสถานที่
+              อัปโหลดไฟล์สำรองข้อมูล zip หรือ rar ที่เกิดจากการสำรองบนแอปพลิเคชันหลักของเครื่องโลคอล ในพาธ <code style="background-color: var(--bg-gray); padding: 2px 6px; border-radius: 4px; font-weight: bold; color: var(--primary-red);">S:\Backup\pawnshop_yyyy-mm-dd.zip</code> เพื่อเก็บความปลอดภัยภายนอกสถานที่
             </p>
             
             <div class="drag-drop-area" id="drop-zone-backup" onclick="openBackupFilePicker()" style="max-width: 600px; margin: 0 auto 24px auto; padding: 6px 20px; height: 170px; cursor: pointer;">
               <i class="fa-solid fa-file-zipper" style="font-size: 32px; margin-bottom: 6px;"></i>
-              <h3>เลือกไฟล์สำรองข้อมูล (.zip)</h3>
-              <p style="font-size: 13px; color: var(--text-medium);">แตะหรือลากไฟล์เพื่อเปิด <code style="font-weight:bold; color: var(--primary-red);">S:\Backup</code> แล้วเลือกไฟล์ .zip</p>
+              <h3>เลือกไฟล์สำรองข้อมูล (.zip, .rar)</h3>
+              <p style="font-size: 13px; color: var(--text-medium);">แตะหรือลากไฟล์เพื่อเปิด <code style="font-weight:bold; color: var(--primary-red);">S:\Backup</code> แล้วเลือกไฟล์ .zip หรือ .rar</p>
               <span id="backup-file-name" style="margin-top: 8px; font-weight: 600; color: var(--primary-red); font-size: 13px;"></span>
             </div>
-            <input type="file" id="backup-zip-file" class="file-input" accept=".zip" onchange="handleBackupFileSelect(this)">
+            <input type="file" id="backup-zip-file" class="file-input" accept=".zip,.rar" onchange="handleBackupFileSelect(this)">
             
             <div style="display: flex; justify-content: center;">
               <button id="btn-backup-upload" class="btn btn-gold" style="width: auto; padding: 14px 40px; opacity: 0.4; cursor: not-allowed;" disabled onclick="runCloudBackup()">
