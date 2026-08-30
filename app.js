@@ -1816,36 +1816,64 @@ function switchAdminScreen(screenName, navItem) {
   updateSystemVersionDisplay();
 }
 
-function renderAdminDashboard() {
-  // Calculate analytics
-  const approvedPayments = db.payments.filter(p => p.BillType === '2');
-  
-  // Total sum of all tickets paid
-  let aggregateTotal = 0;
-  let aggregateCount = 0;
-  approvedPayments.forEach(p => {
-    const t = db.tickets.find(tick => 
-      Number(tick.SystemID) === Number(p.SystemID) && 
-      Number(tick.BudYear) === Number(p.BudYear) && 
-      Number(tick.BookNo) === Number(p.BookNo) && 
-      Number(tick.DocNo) === Number(p.DocNo)
-    );
-    if (t) {
-      aggregateTotal += getSafeInterest(t);
-      aggregateCount++;
+async function renderAdminDashboard() {
+  // 1. Fetch live data directly from Cloudflare (D1 & Config)
+  try {
+    const [syncRes, cfgRes] = await Promise.all([
+      fetch('/api/sync?t=' + Date.now()).catch(() => null),
+      fetch('/api/config?t=' + Date.now()).catch(() => null)
+    ]);
+    if (syncRes && syncRes.ok) {
+      const syncData = await syncRes.json();
+      if (syncData) {
+        if (Array.isArray(syncData.tickets) && syncData.tickets.length > 0) {
+          db.tickets = normalizeKeys(syncData.tickets);
+          safeSetLocalStorage('pawn_tickets', db.tickets);
+        }
+        if (Array.isArray(syncData.customers) && syncData.customers.length > 0) {
+          db.customers = normalizeKeys(syncData.customers);
+          safeSetLocalStorage('pawn_customers', db.customers);
+        }
+        if (Array.isArray(syncData.payments)) {
+          db.payments = normalizeKeys(syncData.payments);
+          safeSetLocalStorage('pawn_payments', db.payments);
+        }
+      }
     }
-  });
+    if (cfgRes && cfgRes.ok) {
+      const cfgData = await cfgRes.json();
+      if (cfgData && cfgData.config) {
+        db.config = { ...db.config, ...cfgData.config };
+        safeSetLocalStorage('pawn_config', db.config);
+      }
+    }
+  } catch (err) {
+    console.warn('[Dashboard] Cloudflare fetch warning, processing with available data:', err);
+  }
+
+  // 2. Process data for Dashboard
+  const approvedPayments = (db.payments || []).filter(p => p && p.BillType === '2');
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const curYear = now.getFullYear();
+  const curMonth = now.getMonth() + 1; // 1-12
+  const curDate = now.getDate();
   
-  // Today's total (dynamic system date + simulated fallback)
-  const today = new Date();
-  const pad = (num) => String(num).padStart(2, '0');
-  const todayStr = `${today.getFullYear()}/${pad(today.getMonth()+1)}/${pad(today.getDate())}`;
-  
+  const todayPrefix = `O${String(curYear).slice(-2)}${pad(curMonth)}${pad(curDate)}`;
+  const todayYMD = `${curYear}/${pad(curMonth)}/${pad(curDate)}`;
+  const todayYMDHyphen = `${curYear}-${pad(curMonth)}-${pad(curDate)}`;
+  const monthYM = `${curYear}/${pad(curMonth)}`;
+  const monthYMHyphen = `${curYear}-${pad(curMonth)}`;
+
+  // Today calculations
   let todayTotal = 0;
-  let todayCount = 0;
+  let todayPaidCount = 0;
   approvedPayments.forEach(p => {
-    if (p.BillDate && (p.BillDate.startsWith(todayStr) || p.BillDate.startsWith('2026/07/22'))) {
-      const t = db.tickets.find(tick => 
+    const bDate = String(p.BillDate || '');
+    const bNo = String(p.BillNo || '');
+    const isToday = bDate.startsWith(todayYMD) || bDate.startsWith(todayYMDHyphen) || (bNo && bNo.startsWith(todayPrefix));
+    if (isToday) {
+      const t = (db.tickets || []).find(tick => 
         Number(tick.SystemID) === Number(p.SystemID) && 
         Number(tick.BudYear) === Number(p.BudYear) && 
         Number(tick.BookNo) === Number(p.BookNo) && 
@@ -1853,18 +1881,36 @@ function renderAdminDashboard() {
       );
       if (t) {
         todayTotal += getSafeInterest(t);
-        todayCount++;
+        todayPaidCount++;
       }
     }
   });
 
-  // Current Month total
-  const monthStr = `${today.getFullYear()}/${pad(today.getMonth()+1)}`;
+  // Daily RunNo sequence from Cloudflare config (runno_OYYMMDD or config.runno)
+  // New day starts at 0 if no transactions, or reads the daily sequence runno
+  let todaySeqCount = todayPaidCount;
+  const cfgRunKey = `runno_${todayPrefix}`;
+  if (db.config && db.config[cfgRunKey] !== undefined) {
+    const parsedRun = parseInt(db.config[cfgRunKey], 10);
+    if (!isNaN(parsedRun) && parsedRun >= 0) {
+      todaySeqCount = Math.max(todayPaidCount, parsedRun);
+    }
+  } else if (db.config && db.config.runno !== undefined && db.config.last_bill_no && String(db.config.last_bill_no).startsWith(todayPrefix)) {
+    const parsedRun = parseInt(db.config.runno, 10);
+    if (!isNaN(parsedRun) && parsedRun >= 0) {
+      todaySeqCount = Math.max(todayPaidCount, parsedRun);
+    }
+  }
+
+  // Month calculations
   let monthTotal = 0;
   let monthCount = 0;
   approvedPayments.forEach(p => {
-    if (p.BillDate && (p.BillDate.startsWith(monthStr) || p.BillDate.startsWith('2026/07'))) {
-      const t = db.tickets.find(tick => 
+    const bDate = String(p.BillDate || '');
+    const bNo = String(p.BillNo || '');
+    const isMonth = bDate.startsWith(monthYM) || bDate.startsWith(monthYMHyphen) || (bNo && bNo.startsWith(`O${String(curYear).slice(-2)}${pad(curMonth)}`));
+    if (isMonth) {
+      const t = (db.tickets || []).find(tick => 
         Number(tick.SystemID) === Number(p.SystemID) && 
         Number(tick.BudYear) === Number(p.BudYear) && 
         Number(tick.BookNo) === Number(p.BookNo) && 
@@ -1877,17 +1923,44 @@ function renderAdminDashboard() {
     }
   });
 
-  // Render values
-  document.getElementById('dash-today-total').innerText = todayTotal.toLocaleString('th-TH', {minimumFractionDigits:2});
-  document.getElementById('dash-today-count').innerText = todayCount;
-  
-  document.getElementById('dash-month-total').innerText = monthTotal.toLocaleString('th-TH', {minimumFractionDigits:2});
-  document.getElementById('dash-month-count').innerText = monthCount;
-  
-  document.getElementById('dash-year-total').innerText = aggregateTotal.toLocaleString('th-TH', {minimumFractionDigits:2});
-  document.getElementById('dash-year-count').innerText = aggregateCount;
-  
-  // Initialize Chart.js safely
+  // Year / Aggregate calculations
+  let yearTotal = 0;
+  let yearCount = 0;
+  approvedPayments.forEach(p => {
+    const bDate = String(p.BillDate || '');
+    const bNo = String(p.BillNo || '');
+    const isYear = bDate.startsWith(String(curYear)) || (bNo && bNo.startsWith(`O${String(curYear).slice(-2)}`));
+    if (isYear) {
+      const t = (db.tickets || []).find(tick => 
+        Number(tick.SystemID) === Number(p.SystemID) && 
+        Number(tick.BudYear) === Number(p.BudYear) && 
+        Number(tick.BookNo) === Number(p.BookNo) && 
+        Number(tick.DocNo) === Number(p.DocNo)
+      );
+      if (t) {
+        yearTotal += getSafeInterest(t);
+        yearCount++;
+      }
+    }
+  });
+
+  // Render values to DOM
+  const elTodayTotal = document.getElementById('dash-today-total');
+  if (elTodayTotal) elTodayTotal.innerText = todayTotal.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const elTodayCount = document.getElementById('dash-today-count');
+  if (elTodayCount) elTodayCount.innerText = todaySeqCount;
+
+  const elMonthTotal = document.getElementById('dash-month-total');
+  if (elMonthTotal) elMonthTotal.innerText = monthTotal.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const elMonthCount = document.getElementById('dash-month-count');
+  if (elMonthCount) elMonthCount.innerText = monthCount;
+
+  const elYearTotal = document.getElementById('dash-year-total');
+  if (elYearTotal) elYearTotal.innerText = yearTotal.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const elYearCount = document.getElementById('dash-year-count');
+  if (elYearCount) elYearCount.innerText = yearCount;
+
+  // Render Chart.js
   const ctx = document.getElementById('dashboardChart');
   if (ctx) {
     if (typeof Chart === 'undefined') {
@@ -1897,119 +1970,134 @@ function renderAdminDashboard() {
       </div>`;
     } else {
       if (state.adminChart) {
-        state.adminChart.destroy();
+        try { state.adminChart.destroy(); } catch(e) {}
       }
-      
+
       // Group payments dynamically by month
       const monthlySum = { Jan: 0, Feb: 0, Mar: 0, Apr: 0, May: 0, Jun: 0, Jul: 0, Aug: 0, Sep: 0, Oct: 0, Nov: 0, Dec: 0 };
       const monthlyCount = { Jan: 0, Feb: 0, Mar: 0, Apr: 0, May: 0, Jun: 0, Jul: 0, Aug: 0, Sep: 0, Oct: 0, Nov: 0, Dec: 0 };
       const monthKeys = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      
+
       approvedPayments.forEach(p => {
-        if (!p.BillDate) return;
-        const parts = p.BillDate.split('/');
-        if (parts.length >= 2) {
-          const monthIdx = parseInt(parts[1], 10) - 1;
-          if (monthIdx >= 0 && monthIdx < 12) {
-            const t = db.tickets.find(tick => 
-              Number(tick.SystemID) === Number(p.SystemID) && 
-              Number(tick.BudYear) === Number(p.BudYear) && 
-              Number(tick.BookNo) === Number(p.BookNo) && 
-              Number(tick.DocNo) === Number(p.DocNo)
-            );
-            if (t) {
-              monthlySum[monthKeys[monthIdx]] += getSafeInterest(t);
-              monthlyCount[monthKeys[monthIdx]] += 1;
+        let monthIdx = -1;
+        if (p.BillDate) {
+          const cleanDate = p.BillDate.replace(/-/g, '/');
+          const parts = cleanDate.split(' ')[0].split('/');
+          if (parts.length >= 2) {
+            monthIdx = parseInt(parts[1], 10) - 1;
+          }
+        } else if (p.BillNo && /^O\d{6}/.test(p.BillNo)) {
+          monthIdx = parseInt(p.BillNo.substring(3, 5), 10) - 1;
+        }
+
+        if (monthIdx >= 0 && monthIdx < 12) {
+          const t = (db.tickets || []).find(tick => 
+            Number(tick.SystemID) === Number(p.SystemID) && 
+            Number(tick.BudYear) === Number(p.BudYear) && 
+            Number(tick.BookNo) === Number(p.BookNo) && 
+            Number(tick.DocNo) === Number(p.DocNo)
+          );
+          if (t) {
+            monthlySum[monthKeys[monthIdx]] += getSafeInterest(t);
+            monthlyCount[monthKeys[monthIdx]] += 1;
+          }
+        }
+      });
+
+      state.adminChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'],
+          datasets: [
+            {
+              label: 'ยอดชำระดอกเบี้ยรวม (บาท)',
+              data: Object.values(monthlySum),
+              borderColor: '#B30006',
+              backgroundColor: 'rgba(179, 0, 6, 0.05)',
+              fill: true,
+              tension: 0.3,
+              borderWidth: 3,
+              pointBackgroundColor: '#D4AF37',
+              pointBorderColor: '#B30006',
+              pointRadius: 5,
+              yAxisID: 'y'
+            },
+            {
+              label: 'จำนวนรายการ (รายการ)',
+              data: Object.values(monthlyCount),
+              type: 'bar',
+              borderColor: '#D4AF37',
+              backgroundColor: 'rgba(212, 175, 55, 0.35)',
+              borderWidth: 1,
+              borderRadius: 4,
+              yAxisID: 'y1'
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top',
+              labels: {
+                boxWidth: 12,
+                font: { size: 12, family: "'Inter', 'Outfit', sans-serif" }
+              }
+            }
+          },
+          scales: {
+            y: {
+              type: 'linear',
+              display: true,
+              position: 'left',
+              beginAtZero: true,
+              grid: { color: '#E5E5EA' },
+              title: {
+                display: true,
+                text: 'ยอดเงินดอกเบี้ย (บาท)',
+                color: '#B30006',
+                font: { weight: 'bold' }
+              }
+            },
+            y1: {
+              type: 'linear',
+              display: true,
+              position: 'right',
+              beginAtZero: true,
+              grid: { drawOnChartArea: false },
+              title: {
+                display: true,
+                text: 'จำนวนรายการ (รายการ)',
+                color: '#D4AF37',
+                font: { weight: 'bold' }
+              },
+              ticks: {
+                precision: 0
+              }
+            },
+            x: {
+              grid: { display: false }
             }
           }
         }
       });
-      
-      // July gets simulated totals fallback
-      monthlySum.Jul = Math.max(160, monthlySum.Jul);
-      monthlyCount.Jul = Math.max(1, monthlyCount.Jul);
-      
-      state.adminChart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'],
-        datasets: [
-          {
-            label: 'ยอดชำระดอกเบี้ยรวม (บาท)',
-            data: Object.values(monthlySum),
-            borderColor: '#B30006',
-            backgroundColor: 'rgba(179, 0, 6, 0.05)',
-            fill: true,
-            tension: 0.3,
-            borderWidth: 3,
-            pointBackgroundColor: '#D4AF37',
-            pointBorderColor: '#B30006',
-            pointRadius: 5,
-            yAxisID: 'y'
-          },
-          {
-            label: 'จำนวนรายการ (รายการ)',
-            data: Object.values(monthlyCount),
-            type: 'bar',
-            borderColor: '#D4AF37',
-            backgroundColor: 'rgba(212, 175, 55, 0.35)',
-            borderWidth: 1,
-            borderRadius: 4,
-            yAxisID: 'y1'
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            display: true,
-            position: 'top',
-            labels: {
-              boxWidth: 12,
-              font: { size: 12, family: "'Inter', 'Outfit', sans-serif" }
-            }
-          }
-        },
-        scales: {
-          y: {
-            type: 'linear',
-            display: true,
-            position: 'left',
-            beginAtZero: true,
-            grid: { color: '#E5E5EA' },
-            title: {
-              display: true,
-              text: 'ยอดเงินดอกเบี้ย (บาท)',
-              color: '#B30006',
-              font: { weight: 'bold' }
-            }
-          },
-          y1: {
-            type: 'linear',
-            display: true,
-            position: 'right',
-            beginAtZero: true,
-            grid: { drawOnChartArea: false },
-            title: {
-              display: true,
-              text: 'จำนวนรายการ (รายการ)',
-              color: '#D4AF37',
-              font: { weight: 'bold' }
-            },
-            ticks: {
-              precision: 0
-            }
-          },
-          x: {
-            grid: { display: false }
-          }
-        }
-      }
-    });
+    }
   }
 }
+
+// Function to trigger clean printing with live timestamp
+function printInterestReport() {
+  const now = new Date();
+  const printTS = formatThaiDate(now) + ' ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  const tsEl = document.getElementById('print-timestamp-val-header');
+  if (tsEl) tsEl.innerText = printTS;
+  
+  const shopSubEl = document.getElementById('print-shop-name-sub');
+  if (shopSubEl) shopSubEl.innerText = db.config.shop_name || 'โรงรับจำนำ อีซี่ Pawnshop 2006';
+  
+  window.print();
 }
 
 function renderAdminReconcile() {
