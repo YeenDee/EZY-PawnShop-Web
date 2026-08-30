@@ -561,7 +561,7 @@ function formatIdCard(id) {
   return `${digits[0]}-${digits.substring(1, 5)}-${digits.substring(5, 10)}-${digits.substring(10, 12)}-${digits[12]}`;
 }
 
-// Event listener for ID Card input auto-formatting
+// Event listener for ID Card input auto-formatting & dynamic inputmode
 const loginIdInput = document.getElementById('login-id');
 if (loginIdInput) {
   loginIdInput.addEventListener('input', (e) => {
@@ -570,6 +570,22 @@ if (loginIdInput) {
     e.target.value = formatIdCard(e.target.value);
     let diff = e.target.value.length - originalLength;
     e.target.setSelectionRange(cursorPosition + diff, cursorPosition + diff);
+
+    // If letters are typed, switch inputmode to text, else keep numeric keypad
+    if (/[a-zA-Z]/.test(e.target.value)) {
+      e.target.inputMode = 'text';
+    } else {
+      e.target.inputMode = 'numeric';
+    }
+  });
+}
+
+const loginContactInput = document.getElementById('login-contact');
+if (loginContactInput) {
+  loginContactInput.addEventListener('input', (e) => {
+    if (/[a-zA-Z]/.test(e.target.value)) {
+      e.target.inputMode = 'text';
+    }
   });
 }
 
@@ -1239,14 +1255,16 @@ function togglePasswordVisibility(inputId, iconId) {
   
   if (input.type === 'password') {
     input.type = 'text';
+    input.inputMode = 'text';
     icon.classList.remove('fa-eye-slash');
     icon.classList.add('fa-eye');
-    icon.style.color = 'var(--primary-red)';
+    icon.style.color = 'var(--primary-red, #B30006)';
   } else {
     input.type = 'password';
+    input.inputMode = 'numeric';
     icon.classList.remove('fa-eye');
     icon.classList.add('fa-eye-slash');
-    icon.style.color = 'var(--text-medium)';
+    icon.style.color = 'var(--text-medium, #888)';
   }
 }
 
