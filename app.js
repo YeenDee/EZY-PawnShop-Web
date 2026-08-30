@@ -265,15 +265,15 @@ initDB();
 
 // Global App States
 let db = {
-  customers: normalizeKeys(JSON.parse(localStorage.getItem('pawn_customers'))),
-  users: normalizeKeys(JSON.parse(localStorage.getItem('pawn_users'))),
-  tickets: normalizeKeys(JSON.parse(localStorage.getItem('pawn_tickets'))),
-  payments: normalizeKeys(JSON.parse(localStorage.getItem('pawn_payments'))),
-  config: JSON.parse(localStorage.getItem('pawn_config')),
-  sync: JSON.parse(localStorage.getItem('pawn_sync_history')),
-  backup: JSON.parse(localStorage.getItem('pawn_backup_history')),
-  positions: JSON.parse(localStorage.getItem('pawn_positions')) || [],
-  holidays: JSON.parse(localStorage.getItem('pawn_holidays')) || []
+  customers: normalizeKeys(JSON.parse(localStorage.getItem('pawn_customers'))) || DEFAULT_CUSTOMERS,
+  users: normalizeKeys(JSON.parse(localStorage.getItem('pawn_users'))) || DEFAULT_USERS,
+  tickets: normalizeKeys(JSON.parse(localStorage.getItem('pawn_tickets'))) || DEFAULT_TICKETS,
+  payments: normalizeKeys(JSON.parse(localStorage.getItem('pawn_payments'))) || DEFAULT_PAYMENTS,
+  config: JSON.parse(localStorage.getItem('pawn_config')) || DEFAULT_CONFIG,
+  sync: JSON.parse(localStorage.getItem('pawn_sync_history')) || DEFAULT_SYNC_HISTORY,
+  backup: JSON.parse(localStorage.getItem('pawn_backup_history')) || DEFAULT_BACKUP_HISTORY,
+  positions: JSON.parse(localStorage.getItem('pawn_positions')) || DEFAULT_POSITIONS,
+  holidays: JSON.parse(localStorage.getItem('pawn_holidays')) || DEFAULT_HOLIDAYS
 };
 
 // ==================== AUTO-FETCH CLOUD DATA ON PAGE LOAD ====================
@@ -347,7 +347,10 @@ async function refreshCloudData(forceRender = true) {
       loadLiveBankConfig();
     }
     
-    console.log(`[Cloud Sync] ซิงค์ข้อมูลล่าสุดสำเร็จ: ${db.tickets.length} ตั๋ว, ${db.customers.length} ลูกค้า, ${db.payments.length} การชำระ`);
+    const tCount = Array.isArray(db.tickets) ? db.tickets.length : 0;
+    const cCount = Array.isArray(db.customers) ? db.customers.length : 0;
+    const pCount = Array.isArray(db.payments) ? db.payments.length : 0;
+    console.log(`[Cloud Sync] ซิงค์ข้อมูลล่าสุดสำเร็จ: ${tCount} ตั๋ว, ${cCount} ลูกค้า, ${pCount} การชำระ`);
     
     if (forceRender) {
       if (state.userRole === 'customer' && state.currentUser) {
@@ -1547,7 +1550,7 @@ async function _doSubmitPayment() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ payments: newPayments.map(p => ({...p, Slip: returnedSlipUrl || ''})), tickets: submittedTickets })
-      }).catch(() => {});
+      }).catch((err) => {console.error('[Sync payment] Error:', err);});
     } else {
       cloudErrorCode = `HTTP ${res.status} ${res.statusText}`;
       try {
@@ -3285,7 +3288,7 @@ async function runCloudSync() {
     return r;
   };
 
-
+try {
     // ====================================================================
     // STEP 1: โหลดข้อมูลล่าสุดจาก D1 กลับมา refresh local state
     // ====================================================================
@@ -3299,7 +3302,7 @@ async function runCloudSync() {
       if (d1Res.ok) {
         const d1Data = await d1Res.json();
         if (d1Data && d1Data.tickets && d1Data.tickets.length > 0) {
-          tickets   = normalizeKeys(d1Data.tickets);
+          tickets = normalizeKeys(d1Data.tickets || []);
           customers = normalizeKeys(d1Data.customers || []);
           payments  = normalizeKeys(d1Data.payments  || []);
           customers.forEach(c => {
@@ -3341,7 +3344,7 @@ async function runCloudSync() {
     const timestampStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
     db.sync.unshift({
       timestamp: timestampStr,
-      status: mysqlSyncOk ? 'สำเร็จ (MySQL\u2192D1)' : 'สำเร็จ (Local\u2192D1)',
+      status: 'สำเร็จ (Local\u2192D1)',
       count: `ซิงค์สำเร็จ: ${tickets.length} ตั๋ว / ${customers.length} ลูกค้า`
     });
     saveDBTable('sync');
@@ -3351,9 +3354,7 @@ async function runCloudSync() {
     alert(`\u2705 ซิงค์ข้อมูลขึ้น Cloud สำเร็จ!\n\n` +
       `  \u2022 ตั๋วจำนำ  : ${tickets.length.toLocaleString()} รายการ\n` +
       `  \u2022 ลูกค้า   : ${customers.length.toLocaleString()} รายการ\n\n` +
-      (mysqlSyncOk
-        ? `ข้อมูลอ่านจาก MySQL และบันทึกเข้า Cloudflare D1 โดยตรงเรียบร้อยแล้ว`
-        : `ข้อมูล (จาก Browser) ถูกบันทึกเข้า Cloudflare D1 เรียบร้อยแล้ว`));
+      `ข้อมูลจาก Browser ถูกบันทึกเข้า Cloudflare D1 เรียบร้อยแล้ว`);
 
   } catch (error) {
     console.error(error);

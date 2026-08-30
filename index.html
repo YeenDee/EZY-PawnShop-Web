@@ -14,11 +14,29 @@
   <link rel="apple-touch-icon" href="icon-192.png">
 
   <!-- CSS Stylesheets -->
-  <link rel="stylesheet" href="app.css?v=42">
+  <link rel="stylesheet" href="app.css?v=57">
   <!-- FontAwesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Immediate Fast Password Toggle Helper (Available instantly on load) -->
+  <script>
+    function togglePasswordVisibility(inputId, iconId) {
+      var input = document.getElementById(inputId);
+      var icon = document.getElementById(iconId);
+      if (!input || !icon) return;
+      if (input.type === 'password') {
+        input.type = 'text';
+        icon.className = 'fa-solid fa-eye';
+        icon.style.color = '#B30006';
+      } else {
+        input.type = 'password';
+        icon.className = 'fa-solid fa-eye-slash';
+        icon.style.color = 'var(--text-medium, #888)';
+      }
+    }
+  </script>
 </head>
 <body>
 
@@ -29,19 +47,19 @@
       <div class="login-logo-container">
         <img src="Logo.ico" alt="EZY Pawnshop Logo">
         <h2>EZY PAWNSHOP 2006</h2>
-        <p>WEB APPLICATION PORTAL Version 1.56</p>
+        <p>WEB APPLICATION PORTAL Version 1.57</p>
       </div>
       
       <form id="login-form" onsubmit="event.preventDefault(); handleLogin();">
         <div class="form-group">
-          <label for="login-id"><i class="fa-solid fa-address-card"></i> เลขประจำตัวประชาชน (Id)</label>
-          <input type="text" id="login-id" class="input-field" placeholder="x-xxxx-xxxxx-xx-x" required autocomplete="off" inputmode="numeric">
+          <label for="login-id"><i class="fa-solid fa-address-card"></i> เลขประจำตัวประชาชน / รหัสพนักงาน (Id)</label>
+          <input type="text" id="login-id" class="input-field" placeholder="เลขบัตร ปชช. (ลูกค้า) / รหัสพนักงาน (admin)" required autocomplete="username">
         </div>
         
         <div class="form-group">
-          <label for="login-contact"><i class="fa-solid fa-phone"></i> เบอร์โทรศัพท์ หรือ รหัสผ่าน</label>
+          <label for="login-contact"><i class="fa-solid fa-lock"></i> เบอร์โทรศัพท์ หรือ รหัสผ่าน</label>
           <div style="position: relative; display: flex; align-items: center;">
-            <input type="password" id="login-contact" class="input-field" placeholder="เบอร์โทรศัพท์ (ลูกค้า) / รหัสผ่าน (พนักงาน)" required inputmode="numeric" style="padding-right: 42px;">
+            <input type="password" id="login-contact" class="input-field" placeholder="เบอร์โทรศัพท์ (ลูกค้า) / รหัสผ่าน (พนักงาน)" required autocomplete="current-password" style="padding-right: 42px;">
             <i id="toggle-login-contact" class="fa-solid fa-eye-slash" onclick="togglePasswordVisibility('login-contact', 'toggle-login-contact')" style="position: absolute; right: 14px; cursor: pointer; color: var(--text-medium); font-size: 16px; z-index: 10; padding: 6px;" title="แสดง/ซ่อนข้อมูล"></i>
           </div>
         </div>
@@ -943,7 +961,10 @@
           </div>
           <div class="form-group">
             <label for="user-crud-pass">รหัสผ่าน (Password)</label>
-            <input type="password" id="user-crud-pass" class="input-field" placeholder="ระบุรหัสผ่านเข้าใช้งาน..." required>
+            <div style="position: relative; display: flex; align-items: center;">
+              <input type="password" id="user-crud-pass" class="input-field" placeholder="ระบุรหัสผ่านเข้าใช้งาน..." required style="padding-right: 42px;">
+              <i id="toggle-user-crud-pass" class="fa-solid fa-eye-slash" onclick="togglePasswordVisibility('user-crud-pass', 'toggle-user-crud-pass')" style="position: absolute; right: 14px; cursor: pointer; color: var(--text-medium); font-size: 16px; z-index: 10; padding: 6px;" title="แสดง/ซ่อนรหัสผ่าน"></i>
+            </div>
           </div>
           <div class="form-group">
             <label for="user-crud-pos">ตำแหน่ง (Position)</label>
@@ -987,6 +1008,6 @@
   </div>
 
   <!-- JavaScript Logics -->
-  <script src="app.js?v=51"></script>
+  <script src="app.js?v=57"></script>
 </body>
 </html>
