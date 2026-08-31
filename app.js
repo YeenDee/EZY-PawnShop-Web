@@ -3405,36 +3405,21 @@ async function runCloudSync() {
     return r;
   };
 
-try {
-    // ====================================================================
-    // STEP 1: โหลดข้อมูลล่าสุดจาก D1 กลับมา refresh local state
-    // ====================================================================
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลดข้อมูลล่าสุดจาก Cloudflare D1...';
+  try {
+    // โหลดข้อมูลล่าสุดจาก Localhost (Memory / LocalStorage) เพื่อนำไปอัปโหลดขึ้น Cloudflare D1
     let customers = db.customers || [];
     let tickets   = db.tickets   || [];
-    let payments  = db.payments  || [];
 
-    try {
-      const d1Res = await fetch('/api/sync?t=' + Date.now());
-      if (d1Res.ok) {
-        const d1Data = await d1Res.json();
-        if (d1Data && d1Data.tickets && d1Data.tickets.length > 0) {
-          tickets = normalizeKeys(d1Data.tickets || []);
-          customers = normalizeKeys(d1Data.customers || []);
-          payments  = normalizeKeys(d1Data.payments  || []);
-          customers.forEach(c => {
-            if (c.Name) c.Name = String(c.Name).replace(/\s+/g, ' ').trim();
-          });
-          db.tickets   = tickets;
-          db.customers = customers;
-          db.payments  = payments;
-          saveDBTable('tickets');
-          saveDBTable('customers');
-          saveDBTable('payments');
-          console.log('[CloudSync] Refreshed from D1 — tickets:', tickets.length, 'customers:', customers.length);
-        }
-      }
-    } catch(e) { console.error('[CloudSync] Fetch D1 error:', e); }
+    if ((!customers || customers.length === 0) && localStorage.getItem('pawn_customers')) {
+      try { customers = normalizeKeys(JSON.parse(localStorage.getItem('pawn_customers'))) || []; } catch(e) {}
+    }
+    if ((!tickets || tickets.length === 0) && localStorage.getItem('pawn_tickets')) {
+      try { tickets = normalizeKeys(JSON.parse(localStorage.getItem('pawn_tickets'))) || []; } catch(e) {}
+    }
+
+    customers.forEach(c => {
+      if (c.Name) c.Name = String(c.Name).replace(/\s+/g, ' ').trim();
+    });
 
     // ====================================================================
     // STEP 2: ส่งข้อมูลใน memory ขึ้น D1 เพิ่มเติม (chunk 200 records/ครั้ง)
