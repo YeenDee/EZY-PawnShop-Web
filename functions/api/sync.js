@@ -152,6 +152,15 @@ export async function onRequest(context) {
         return chunks;
       };
 
+      // ==================================================
+      // 0. CLEAR EXISTING TABLES IF REQUESTED (REPLACE MODE)
+      // ==================================================
+      if (data.clear_tables === true || data.reset === true || data.replace === true) {
+        await env.DB.batch([
+          env.DB.prepare('DELETE FROM customers'),
+          env.DB.prepare('DELETE FROM tickets')
+        ]);
+      }
 
       // ==================================================
       // 1. UPSERT CUSTOMERS

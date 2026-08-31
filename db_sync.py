@@ -16,6 +16,14 @@ import urllib.error
 import json
 import zipfile
 
+try:
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 # Bypass SSL verification (แก้ปัญหา Windows SSL Certificate)
 _ssl_ctx = ssl.create_default_context()
 _ssl_ctx.check_hostname = False
@@ -232,7 +240,7 @@ def upload_to_cloudflare_kv(key, data_str):
     return False, "KV upload failed"
 
 
-def upload_chunked_to_pages(customers_data, tickets_data, payments_data=None):
+def upload_chunked_to_pages(customers_data, tickets_data, payments_data=None, clear_tables=True):
     """ส่งข้อมูลแบบ chunk เล็กๆ ผ่าน POST /api/sync ไปยัง Pages Function โดยตรง
     แต่ละ chunk มีขนาดไม่เกิน 100 records เพื่อไม่ให้โดน Cloudflare WAF/body size limit"""
     if payments_data is None:
@@ -271,6 +279,7 @@ def upload_chunked_to_pages(customers_data, tickets_data, payments_data=None):
     
     total_sent = 0
     total_items = len(customers_data) + len(tickets_data) + len(payments_data)
+    is_first_chunk = clear_tables
     
     # ส่ง Customers ทีละ chunk
     for i in range(0, max(1, len(customers_data)), CHUNK_SIZE):
@@ -278,7 +287,14 @@ def upload_chunked_to_pages(customers_data, tickets_data, payments_data=None):
         if not chunk:
             continue
         try:
-            post_chunk({"customers": chunk, "tickets": [], "payments": [], "sync_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+            post_chunk({
+                "customers": chunk,
+                "tickets": [],
+                "payments": [],
+                "clear_tables": is_first_chunk,
+                "sync_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
+            is_first_chunk = False
             total_sent += len(chunk)
             print(f"    ลูกค้า {min(i+CHUNK_SIZE, len(customers_data)):,}/{len(customers_data):,} ({total_sent:,}/{total_items:,})")
         except Exception as e:
@@ -291,7 +307,14 @@ def upload_chunked_to_pages(customers_data, tickets_data, payments_data=None):
         if not chunk:
             continue
         try:
-            post_chunk({"customers": [], "tickets": chunk, "payments": [], "sync_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+            post_chunk({
+                "customers": [],
+                "tickets": chunk,
+                "payments": [],
+                "clear_tables": is_first_chunk,
+                "sync_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
+            is_first_chunk = False
             total_sent += len(chunk)
             print(f"    ตั๋วจำนำ {min(i+CHUNK_SIZE, len(tickets_data)):,}/{len(tickets_data):,} ({total_sent:,}/{total_items:,})")
         except Exception as e:
@@ -449,12 +472,12 @@ def run_db_sync(mock_mode=False):
     print(f"[*] บันทึกสำเนาไฟล์ซิงค์ล่าสุดที่: {local_sync_file}")
     
     # ส่งข้อมูลตรงเข้า Cloudflare D1 ผ่าน Pages Function /api/sync (ไม่ผ่าน KV)
-    print(f"\n[*] === ขั้นตอนที่ 2: ส่งข้อมูลตรงเข้า Cloudflare D1 (MySQL → D1) ===")
-    success = upload_chunked_to_pages(customers_data, tickets_data, [])
+    print(f"\n[*] === ขั้นตอนที่ 2: ส่งข้อมูลตรงเข้า Cloudflare D1 (MySQL -> D1) ===")
+    success = upload_chunked_to_pages(customers_data, tickets_data, [], clear_tables=True)
     
     if success:
         print(f"\n{'='*50}")
-        print(f"  [OK] ซิงค์ข้อมูลขึ้น Cloudflare D1 สำเร็จ! (MySQL → D1 โดยตรง)")
+        print(f"  [OK] ซิงค์ข้อมูลขึ้น Cloudflare D1 สำเร็จ! (MySQL -> D1 โดยตรง)")
         print(f"  - ตั๋วจำนำ  : {len(tickets_data):,} รายการ")
         print(f"  - ลูกค้า   : {len(customers_data):,} รายการ")
         print(f"  (อ่านเฉพาะ customer และ ticket ตามคำสั่ง)")
