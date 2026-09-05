@@ -3366,28 +3366,93 @@ async function runCloudSync() {
   };
 
   try {
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังล้าง Cache และ LocalStorage เดิม...';
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังตรวจสอบการเชื่อมต่อ Local Server (MySQL)...';
 
-    // 1. เคลียร์ Cache และ LocalStorage ของตาราง customers และ tickets ก่อนซิงค์
+    // 1. ตรวจสอบ Local Server ในเครื่อง (server.py) ที่สามารถเข้าถึง MySQL ในไดรฟ์ S:\AppServ\MySQL\data\Pawnshop\ และอ่าน option.ini
+    let localUrl = null;
+    const candidateHosts = [
+      'http://localhost:8000',
+      'http://127.0.0.1:8000'
+    ];
+
+    for (const host of candidateHosts) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const res = await fetch(`${host}/api/sync`, { method: 'OPTIONS', signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok || res.status === 204 || res.status === 200) {
+          localUrl = host;
+          break;
+        }
+      } catch (e) {}
+    }
+
+    if (!localUrl) {
+      // ลองทดสอบ GET option.ini
+      for (const host of candidateHosts) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2000);
+          const res = await fetch(`${host}/option.ini?t=` + Date.now(), { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (res.ok) {
+            localUrl = host;
+            break;
+          }
+        } catch (e) {}
+      }
+    }
+
+    // หากไม่พบ Local Server ให้แจ้งเตือนพร้อมแนะนำเปิด Start_Server.bat หรือรัน Sync_MySQL_To_Cloud.bat
+    if (!localUrl) {
+      alert(
+        '⚠️ ไม่สามารถเชื่อมต่อกับโปรแกรมซิงค์ในเครื่องได้ (http://localhost:8000)\n\n' +
+        'เนื่องจากท่านเปิดหน้าเว็บผ่าน Cloudflare Pages บนอินเทอร์เน็ต การดึงข้อมูล MySQL ในไดรฟ์ S:\\ และไฟล์ option.ini จะต้องมีโปรแกรมเชื่อมต่อที่เครื่องแม่ทำงานอยู่\n\n' +
+        'วิธีแก้ไข:\n' +
+        '1. ไปที่โฟลเดอร์โปรเจกต์ ดับเบิ้ลคลิกไฟล์ "Start_Server.bat" เพื่อเปิดเซิร์ฟเวอร์\n' +
+        '   (หรือดับเบิ้ลคลิก "Sync_MySQL_To_Cloud.bat" เพื่อสั่งซิงค์ขึ้น Cloudflare ทันที 1-Click)\n' +
+        '2. จากนั้นกดปุ่มซิงค์บนหน้าเว็บนี้อีกครั้งครับ'
+      );
+      if (btn) { btn.disabled = false; btn.innerHTML = oldText; }
+      return;
+    }
+
+    // 2. สั่ง Local Server ให้รัน db_sync.py
+    // ซึ่งจะอ่านค่า config จาก option.ini [mysql] (host, user, password, database)
+    // ดึงข้อมูลตั๋ว (เฉพาะ bill_stat = 'N') และลูกค้าจาก S:\AppServ\MySQL\data\Pawnshop\
+    // แล้วอัปโหลดตรงขึ้น Cloudflare D1
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังอ่าน MySQL (S:\\...\\Pawnshop) และอัปโหลดขึ้น Cloudflare...';
+    
+    let syncResData = null;
+    try {
+      const syncRes = await fetch(`${localUrl}/api/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync_mysql', sync_time: new Date().toISOString() })
+      });
+      if (syncRes.ok) {
+        syncResData = await syncRes.json();
+      } else {
+        throw new Error(`Local Server ตอบกลับ HTTP ${syncRes.status}`);
+      }
+    } catch (postErr) {
+      throw new Error(`เกิดข้อผิดพลาดในการสั่งซิงค์: ${postErr.message}`);
+    }
+
+    if (!syncResData || !syncResData.success) {
+      const errMsg = (syncResData && syncResData.error) || (syncResData && syncResData.message) || 'การดึงข้อมูลจาก MySQL ล้มเหลว';
+      throw new Error(errMsg);
+    }
+
+    // 3. เคลียร์ Cache และ LocalStorage เดิมใน Browser เพื่อให้ข้อมูลสะอาด
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังล้าง Cache และอัปเดตข้อมูลล่าสุด...';
     localStorage.removeItem('pawn_customers');
     localStorage.removeItem('pawn_tickets');
     db.customers = [];
     db.tickets = [];
 
-    // 2. ถ้าทำงานบน Localhost Server ให้สั่ง POST /api/sync เพื่อรัน db_sync.py (ดึงจาก MySQL ขึ้น Cloudflare D1)
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังซิงค์ข้อมูลจาก MySQL ขึ้น Cloudflare D1...';
-    try {
-      await fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'trigger_sync', sync_time: new Date().toISOString() })
-      });
-    } catch (postErr) {
-      console.warn('[CloudSync] POST /api/sync:', postErr);
-    }
-
-    // 3. ดึงข้อมูลล่าสุดจาก Cloudflare D1 กลับมาบันทึกลง LocalStorage ให้ตรงกัน 100%
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังดึงข้อมูลล่าสุดจาก Cloudflare D1 ลง LocalStorage...';
+    // 4. ดึงข้อมูลล่าสุดจาก Cloudflare D1 กลับมาลง LocalStorage
     let d1Data = null;
     try {
       const d1Res = await fetch('/api/sync?t=' + Date.now());
@@ -3398,10 +3463,10 @@ async function runCloudSync() {
       console.warn('[CloudSync] Fetch D1 error:', e);
     }
 
-    // Fallback: หากดึง /api/sync ไม่ได้ ให้ดึงจาก /last_cloud_sync.json
+    // Fallback: หากดึง /api/sync ไม่ได้ ให้ดึงจาก Local Server last_cloud_sync.json
     if (!d1Data || (!d1Data.tickets && !d1Data.customers)) {
       try {
-        const fRes = await fetch('/last_cloud_sync.json?t=' + Date.now());
+        const fRes = await fetch(`${localUrl}/api/sync?t=` + Date.now());
         if (fRes.ok) {
           d1Data = await fRes.json();
         }
@@ -3418,23 +3483,26 @@ async function runCloudSync() {
       safeSetLocalStorage('pawn_tickets', db.tickets);
     }
 
-    // หมายเหตุ: ไม่ sync payments ใน Cloud Sync นี้
-    // payments ถูกจัดการโดย /api/payment เมื่อลูกค้าส่งสลิป
-
+    const ticketCount = (syncResData && syncResData.tickets) || db.tickets.length;
+    const custCount   = (syncResData && syncResData.customers) || db.customers.length;
     const timestampStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
     db.sync.unshift({
       timestamp: timestampStr,
-      status: 'สำเร็จ (Clean Sync)',
-      count: `ซิงค์สำเร็จ: ${db.tickets.length} ตั๋ว / ${db.customers.length} ลูกค้า`
+      status: 'สำเร็จ (MySQL→Cloudflare D1)',
+      count: `ซิงค์สำเร็จ: ${ticketCount} ตั๋ว / ${custCount} ลูกค้า`
     });
-    saveDBTable('sync');
+    safeSetLocalStorage('pawn_sync_history', db.sync);
     renderSyncHistory();
     renderAll();
 
-    alert(`✅ เคลียร์ Cache และซิงค์ข้อมูลสำเร็จ!\n\n` +
-      `  • ตั๋วจำนำ (Tickets)  : ${db.tickets.length.toLocaleString()} รายการ\n` +
-      `  • ลูกค้า (Customers) : ${db.customers.length.toLocaleString()} รายการ\n\n` +
-      `ข้อมูลใน LocalStorage และ Cloudflare D1 ตรงกัน 100% เรียบร้อยแล้ว`);
+    alert(
+      `✅ ซิงค์ข้อมูลจาก MySQL ขึ้น Cloudflare สำเร็จเรียบร้อย!\n\n` +
+      `  • ที่ตั้งฐานข้อมูล MySQL : S:\\AppServ\\MySQL\\data\\Pawnshop (option.ini)\n` +
+      `  • ตั๋วรับจำนำ (Tickets)  : ${ticketCount.toLocaleString()} รายการ (เฉพาะ bill_stat = 'N')\n` +
+      `  • ลูกค้า (Customers)     : ${custCount.toLocaleString()} รายการ\n\n` +
+      `ข้อมูลบน Cloudflare D1 และในระบบตรงกัน 100% เรียบร้อยแล้ว`
+    );
 
   } catch (error) {
     console.error(error);

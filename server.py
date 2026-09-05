@@ -54,19 +54,22 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        self.end_headers()
+    # do_OPTIONS is handled uniformly at end of class
 
     def do_POST(self):
         if self.path == '/api/sync':
             try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                if content_len > 0:
+                    self.rfile.read(content_len)
+
                 cust_path = r"S:\AppServ\MySQL\data\PawnShop\customer"
                 tick_path = r"S:\AppServ\MySQL\data\PawnShop\ticket"
                 
+                if not (os.path.exists(cust_path) or os.path.exists(cust_path + ".MYD")):
+                    cust_path = r"S:\AppServ\MySQL\data\Pawnshop\customer"
+                    tick_path = r"S:\AppServ\MySQL\data\Pawnshop\ticket"
+
                 if not (os.path.exists(cust_path) or os.path.exists(cust_path + ".MYD")):
                     cust_path = r"S:\server\AppServ\MySQL\data\Pawnshop\customer"
                     tick_path = r"S:\server\AppServ\MySQL\data\Pawnshop\ticket"
@@ -74,42 +77,52 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 cust_exists = os.path.exists(cust_path) or os.path.exists(cust_path + ".MYD") or os.path.exists(cust_path + ".ibd")
                 tick_exists = os.path.exists(tick_path) or os.path.exists(tick_path + ".MYD") or os.path.exists(tick_path + ".ibd")
                 
-                # รัน db_sync.py sync → อ่าน MySQL แล้วส่งตรงเข้า Cloudflare D1
-                script_path = os.path.join(DIRECTORY, "db_sync.py")
-                result = subprocess.run(
-                    [sys.executable, script_path, "sync"],
-                    capture_output=True, text=True, encoding='utf-8', errors='ignore',
-                    timeout=120  # รอได้สูงสุด 2 นาที
-                )
+                # รัน db_sync.run_db_sync() ตรงๆ (อ่าน config จาก option.ini [mysql] แล้วซิงค์ตรงเข้า Cloudflare D1)
+                import db_sync
+                try:
+                    db_sync.run_db_sync(mock_mode=False)
+                    sync_ok = True
+                except Exception as sync_e:
+                    print(f"[!] run_db_sync error: {sync_e}")
+                    sync_ok = False
                 
-                sync_ok = result.returncode == 0
+                ticket_count = 0
+                customer_count = 0
+                sync_file = os.path.join(DIRECTORY, "last_cloud_sync.json")
+                if os.path.exists(sync_file):
+                    try:
+                        with open(sync_file, 'r', encoding='utf-8') as f:
+                            sdata = json.load(f)
+                            ticket_count = len(sdata.get('tickets', []))
+                            customer_count = len(sdata.get('customers', []))
+                    except Exception:
+                        pass
+
                 response_data = {
                     "success": sync_ok,
                     "message": "ซิงค์ข้อมูล MySQL → Cloudflare D1 เรียบร้อยแล้ว" if sync_ok else "db_sync.py ทำงานแต่อาจมีข้อผิดพลาด",
+                    "tickets": ticket_count,
+                    "customers": customer_count,
                     "cust_found": cust_exists,
                     "tick_found": tick_exists,
                     "cust_path": cust_path,
-                    "tick_path": tick_path,
-                    "output": result.stdout[-3000:] if result.stdout else '',   # ส่งแค่ 3000 ตัวอักษรสุดท้าย
-                    "error_output": result.stderr[-1000:] if result.stderr else ''
+                    "output": "db_sync.run_db_sync() completed successfully" if sync_ok else "db_sync failed",
+                    "error_output": ""
                 }
                 
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
-                self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 self.wfile.write(json.dumps(response_data, ensure_ascii=False).encode('utf-8'))
                 
             except subprocess.TimeoutExpired:
                 self.send_response(504)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
-                self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": "db_sync.py timeout (>120s)"}, ensure_ascii=False).encode('utf-8'))
             except Exception as e:
                 self.send_response(500)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
-                self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode('utf-8'))
 
@@ -150,10 +163,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404, "File not found")
 
     def end_headers(self):
-        # Enable CORS
+        # Enable CORS and Chrome Private Network Access (PNA)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type')
+        self.send_header('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Authorization, *')
+        self.send_header('Access-Control-Allow-Private-Network', 'true')
         super().end_headers()
 
     def do_OPTIONS(self):
