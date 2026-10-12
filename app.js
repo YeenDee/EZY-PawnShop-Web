@@ -3237,7 +3237,14 @@ async function openBackupFilePicker() {
   if (window.showOpenFilePicker) {
     try {
       const [fileHandle] = await window.showOpenFilePicker({
-        types: [{ description: 'Zip Backup Files', accept: { 'application/zip': ['.zip'] } }],
+        types: [{
+          description: 'Backup Files (ZIP, RAR)',
+          accept: {
+              'application/zip': ['.zip'],
+              'application/vnd.rar': ['.rar']
+          }
+        }],
+       // types: [{ description: 'Zip Backup Files', accept: { 'application/zip': ['.zip'] } }],
         multiple: false
       });
       const file = await fileHandle.getFile();
@@ -3368,20 +3375,20 @@ async function runCloudSync() {
   try {
     if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังตรวจสอบการเชื่อมต่อ Local Server (MySQL)...';
 
-    // 1. ตรวจสอบ Local Server ในเครื่อง (server.py) ที่สามารถเข้าถึง MySQL ในไดรฟ์ S:\AppServ\MySQL\data\Pawnshop\ และอ่าน option.ini
+    // 1. ตรวจสอบ Local Server ในเครื่อง (server.py / server.exe) ที่สามารถเข้าถึง MySQL ในไดรฟ์ S:\AppServ\MySQL\data\Pawnshop\ และอ่าน option.ini
     let localUrl = null;
     const candidateHosts = [
-      'http://localhost:8000',
-      'http://127.0.0.1:8000'
+      'http://127.0.0.1:8000',
+      'http://localhost:8000'
     ];
 
     for (const host of candidateHosts) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-        const res = await fetch(`${host}/api/sync`, { method: 'OPTIONS', signal: controller.signal });
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const res = await fetch(`${host}/api/ping?t=` + Date.now(), { method: 'GET', signal: controller.signal });
         clearTimeout(timeoutId);
-        if (res.ok || res.status === 204 || res.status === 200) {
+        if (res.ok) {
           localUrl = host;
           break;
         }
@@ -3393,8 +3400,8 @@ async function runCloudSync() {
       for (const host of candidateHosts) {
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2000);
-          const res = await fetch(`${host}/option.ini?t=` + Date.now(), { signal: controller.signal });
+          const timeoutId = setTimeout(() => controller.abort(), 4000);
+          const res = await fetch(`${host}/option.ini?t=` + Date.now(), { method: 'GET', signal: controller.signal });
           clearTimeout(timeoutId);
           if (res.ok) {
             localUrl = host;
@@ -3428,7 +3435,6 @@ async function runCloudSync() {
     try {
       const syncRes = await fetch(`${localUrl}/api/sync`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'sync_mysql', sync_time: new Date().toISOString() })
       });
       if (syncRes.ok) {

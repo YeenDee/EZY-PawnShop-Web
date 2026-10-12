@@ -49,7 +49,7 @@
       <div class="login-logo-container">
         <img src="Logo.ico" alt="EZY Pawnshop Logo">
         <h2>EZY PAWNSHOP 2006</h2>
-        <p>WEB APPLICATION PORTAL Version 1.62</p>
+        <p>WEB APPLICATION PORTAL Version 1.062</p>
       </div>
       
       <form id="login-form" onsubmit="event.preventDefault(); handleLogin();">
@@ -467,8 +467,8 @@
               <label for="filter-system-id"><i class="fa-solid fa-server"></i> 3. รหัสระบบ (SystemID)</label>
               <select id="filter-system-id" class="input-field" onchange="applyReconcileFilters()" style="height: 50px; background-color: #ffffff;">
                 <option value="all" selected>แสดงทั้งหมด (ทั้ง 2 ระบบ)</option>
-                <option value="1">ทองคำ/เพชร (SystemID = 1)</option>
-                <option value="2">เบ็ดเตล็ด/มือถือ/อื่นๆ (SystemID = 2)</option>
+                <option value="1">(SystemID = 1)</option>
+                <option value="2">(SystemID = 2)</option>
               </select>
             </div>
             <div class="form-group" style="margin-bottom: 0; justify-content: flex-end;">
@@ -553,8 +553,8 @@
                 <label for="report-filter-system-id" style="font-size: 13px;"><i class="fa-solid fa-server"></i> รหัสระบบ (SystemID)</label>
                 <select id="report-filter-system-id" class="input-field" onchange="renderAdminReport()" style="height: 50px; background-color: #ffffff;">
                   <option value="all" selected>แสดงทั้งหมด (ทั้ง 2 ระบบ)</option>
-                  <option value="1">ทองคำ/เพชร (SystemID = 1)</option>
-                  <option value="2">เบ็ดเตล็ด/มือถือ/อื่นๆ (SystemID = 2)</option>
+                  <option value="1">(SystemID = 1)</option>
+                  <option value="2">(SystemID = 2)</option>
                 </select>
               </div>
               <button type="button" class="btn btn-secondary" onclick="clearReportFilter()" style="width: auto; padding: 12px 18px; height: 50px;">

@@ -17,12 +17,18 @@ import json
 import zipfile
 
 try:
-    if hasattr(sys.stdout, 'reconfigure'):
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, 'w', encoding='utf-8')
+    elif hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    if hasattr(sys.stderr, 'reconfigure'):
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, 'w', encoding='utf-8')
+    elif hasattr(sys.stderr, 'reconfigure'):
         sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 except Exception:
     pass
+
+BASE_DIR = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
 
 # Bypass SSL verification (แก้ปัญหา Windows SSL Certificate)
 _ssl_ctx = ssl.create_default_context()
@@ -73,7 +79,7 @@ import configparser as _cp
 def _load_config():
     """อ่านค่า config ทั้งหมดจาก option.ini (MySQL + Cloudflare)
     ถ้าไม่มีไฟล์หรือไม่มี key จะใช้ค่า fallback ที่กำหนดไว้"""
-    ini_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'option.ini')
+    ini_path = os.path.join(BASE_DIR, 'option.ini')
     cfg = _cp.ConfigParser()
     if os.path.exists(ini_path):
         try:
@@ -466,7 +472,7 @@ def run_db_sync(mock_mode=False):
     payload_str = json.dumps(payload, ensure_ascii=False, indent=2, cls=MySQLJSONEncoder)
     
     # Save local copy of synced data
-    local_sync_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "last_cloud_sync.json")
+    local_sync_file = os.path.join(BASE_DIR, "last_cloud_sync.json")
     with open(local_sync_file, 'w', encoding='utf-8') as f:
         f.write(payload_str)
     print(f"[*] บันทึกสำเนาไฟล์ซิงค์ล่าสุดที่: {local_sync_file}")
@@ -493,6 +499,7 @@ def run_db_sync(mock_mode=False):
         print(f"{'='*50}\n")
 
     print("="*50 + "\n")
+    return success
 
 
 
