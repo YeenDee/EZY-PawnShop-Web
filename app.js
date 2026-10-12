@@ -3238,16 +3238,21 @@ async function openBackupFilePicker() {
     try {
       const [fileHandle] = await window.showOpenFilePicker({
         types: [{
-          description: 'Backup Files (ZIP, RAR)',
+          description: 'Backup Files (*.zip, *.rar)',
           accept: {
-              'application/zip': ['.zip'],
-              'application/vnd.rar': ['.rar']
+            'application/zip': ['.zip', '.rar'],
+            'application/x-rar-compressed': ['.rar'],
+            'application/vnd.rar': ['.rar']
           }
         }],
-       // types: [{ description: 'Zip Backup Files', accept: { 'application/zip': ['.zip'] } }],
         multiple: false
       });
       const file = await fileHandle.getFile();
+      const fn = file.name.toLowerCase();
+      if (!fn.endsWith('.zip') && !fn.endsWith('.rar')) {
+        alert('⚠️ กรุณาเลือกไฟล์สำรองข้อมูลนามสกุล .zip หรือ .rar เท่านั้น');
+        return;
+      }
       state.uploadedBackupFile = file;
       const display = document.getElementById('backup-file-name');
       if (display) display.innerText = `✅ เลือกไฟล์สำเร็จ: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`;
