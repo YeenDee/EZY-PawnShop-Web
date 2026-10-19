@@ -994,12 +994,13 @@ function renderCustomerTickets() {
     if (t.BillType === '9') {
       statusText = 'กำลังตรวจสอบ';
       badgeClass = 'badge-pending';
-    } else if (t.BillType === '2' || t.BillStat === 'I') {
+    } else if (t.BillType === '2') {
       statusText = 'ชำระแล้ว';
       badgeClass = 'badge-paid';
     }
     
     // Convert status symbols
+    if (t.BillStat === 'I') statusText = 'ส่งดอกสำเร็จ';
     if (t.BillStat === 'R') statusText = 'ไถ่ถอนสำเร็จ';
     if (t.BillStat === 'C') statusText = 'เพิ่มต้นสำเร็จ';
     if (t.BillStat === 'D') statusText = 'ลดต้นสำเร็จ';
@@ -1811,7 +1812,7 @@ async function renderAdminDashboard() {
     console.warn('[Dashboard] Cloudflare fetch warning, processing with available data:', err);
   }
 
-  // 2. Process data for Dashboard
+  // 2. Process data for Dashboard from payments (only approved BillType === '2')
   const approvedPayments = (db.payments || []).filter(p => p && p.BillType === '2');
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
@@ -1820,17 +1821,20 @@ async function renderAdminDashboard() {
   const curDate = now.getDate();
   
   const todayPrefix = `O${String(curYear).slice(-2)}${pad(curMonth)}${pad(curDate)}`;
+  const monthPrefix = `O${String(curYear).slice(-2)}${pad(curMonth)}`;
+  const yearPrefix = `O${String(curYear).slice(-2)}`;
+  
   const todayYMD = `${curYear}/${pad(curMonth)}/${pad(curDate)}`;
   const todayYMDHyphen = `${curYear}-${pad(curMonth)}-${pad(curDate)}`;
   const monthYM = `${curYear}/${pad(curMonth)}`;
   const monthYMHyphen = `${curYear}-${pad(curMonth)}`;
 
-  // Today calculations
+  // Today calculations (ยอดชำระออนไลน์ประจำวัน)
   let todayTotal = 0;
   let todayPaidCount = 0;
   approvedPayments.forEach(p => {
-    const bDate = String(p.BillDate || '');
-    const bNo = String(p.BillNo || '');
+    const bDate = String(p.BillDate || '').trim();
+    const bNo = String(p.BillNo || '').trim();
     const isToday = bDate.startsWith(todayYMD) || bDate.startsWith(todayYMDHyphen) || (bNo && bNo.startsWith(todayPrefix));
     if (isToday) {
       const t = (db.tickets || []).find(tick => 
@@ -1839,36 +1843,18 @@ async function renderAdminDashboard() {
         Number(tick.BookNo) === Number(p.BookNo) && 
         Number(tick.DocNo) === Number(p.DocNo)
       );
-      if (t) {
-        todayTotal += getSafeInterest(t);
-        todayPaidCount++;
-      }
+      todayTotal += t ? getSafeInterest(t) : (Number(p.Totalint || p.totalint || p.Interest || 0));
+      todayPaidCount++;
     }
   });
 
-  // Daily RunNo sequence from Cloudflare config (runno_OYYMMDD or config.runno)
-  // New day starts at 0 if no transactions, or reads the daily sequence runno
-  let todaySeqCount = todayPaidCount;
-  const cfgRunKey = `runno_${todayPrefix}`;
-  if (db.config && db.config[cfgRunKey] !== undefined) {
-    const parsedRun = parseInt(db.config[cfgRunKey], 10);
-    if (!isNaN(parsedRun) && parsedRun >= 0) {
-      todaySeqCount = Math.max(todayPaidCount, parsedRun);
-    }
-  } else if (db.config && db.config.runno !== undefined && db.config.last_bill_no && String(db.config.last_bill_no).startsWith(todayPrefix)) {
-    const parsedRun = parseInt(db.config.runno, 10);
-    if (!isNaN(parsedRun) && parsedRun >= 0) {
-      todaySeqCount = Math.max(todayPaidCount, parsedRun);
-    }
-  }
-
-  // Month calculations
+  // Month calculations (ยอดชำระออนไลน์ประจำเดือน)
   let monthTotal = 0;
   let monthCount = 0;
   approvedPayments.forEach(p => {
-    const bDate = String(p.BillDate || '');
-    const bNo = String(p.BillNo || '');
-    const isMonth = bDate.startsWith(monthYM) || bDate.startsWith(monthYMHyphen) || (bNo && bNo.startsWith(`O${String(curYear).slice(-2)}${pad(curMonth)}`));
+    const bDate = String(p.BillDate || '').trim();
+    const bNo = String(p.BillNo || '').trim();
+    const isMonth = bDate.startsWith(monthYM) || bDate.startsWith(monthYMHyphen) || (bNo && bNo.startsWith(monthPrefix));
     if (isMonth) {
       const t = (db.tickets || []).find(tick => 
         Number(tick.SystemID) === Number(p.SystemID) && 
@@ -1876,20 +1862,18 @@ async function renderAdminDashboard() {
         Number(tick.BookNo) === Number(p.BookNo) && 
         Number(tick.DocNo) === Number(p.DocNo)
       );
-      if (t) {
-        monthTotal += getSafeInterest(t);
-        monthCount++;
-      }
+      monthTotal += t ? getSafeInterest(t) : (Number(p.Totalint || p.totalint || p.Interest || 0));
+      monthCount++;
     }
   });
 
-  // Year / Aggregate calculations
+  // Year / Aggregate calculations (ยอดชำระออนไลน์สะสมปี)
   let yearTotal = 0;
   let yearCount = 0;
   approvedPayments.forEach(p => {
-    const bDate = String(p.BillDate || '');
-    const bNo = String(p.BillNo || '');
-    const isYear = bDate.startsWith(String(curYear)) || (bNo && bNo.startsWith(`O${String(curYear).slice(-2)}`));
+    const bDate = String(p.BillDate || '').trim();
+    const bNo = String(p.BillNo || '').trim();
+    const isYear = bDate.startsWith(String(curYear)) || (bNo && bNo.startsWith(yearPrefix));
     if (isYear) {
       const t = (db.tickets || []).find(tick => 
         Number(tick.SystemID) === Number(p.SystemID) && 
@@ -1897,10 +1881,8 @@ async function renderAdminDashboard() {
         Number(tick.BookNo) === Number(p.BookNo) && 
         Number(tick.DocNo) === Number(p.DocNo)
       );
-      if (t) {
-        yearTotal += getSafeInterest(t);
-        yearCount++;
-      }
+      yearTotal += t ? getSafeInterest(t) : (Number(p.Totalint || p.totalint || p.Interest || 0));
+      yearCount++;
     }
   });
 
@@ -1908,7 +1890,7 @@ async function renderAdminDashboard() {
   const elTodayTotal = document.getElementById('dash-today-total');
   if (elTodayTotal) elTodayTotal.innerText = todayTotal.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const elTodayCount = document.getElementById('dash-today-count');
-  if (elTodayCount) elTodayCount.innerText = todaySeqCount;
+  if (elTodayCount) elTodayCount.innerText = todayPaidCount;
 
   const elMonthTotal = document.getElementById('dash-month-total');
   if (elMonthTotal) elMonthTotal.innerText = monthTotal.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1957,10 +1939,9 @@ async function renderAdminDashboard() {
             Number(tick.BookNo) === Number(p.BookNo) && 
             Number(tick.DocNo) === Number(p.DocNo)
           );
-          if (t) {
-            monthlySum[monthKeys[monthIdx]] += getSafeInterest(t);
-            monthlyCount[monthKeys[monthIdx]] += 1;
-          }
+          const interest = t ? getSafeInterest(t) : (Number(p.Totalint || p.totalint || p.Interest || 0));
+          monthlySum[monthKeys[monthIdx]] += interest;
+          monthlyCount[monthKeys[monthIdx]] += 1;
         }
       });
 
@@ -2336,7 +2317,7 @@ function closeReconcileDetailModal() {
 }
 
 // Approve a single payment transaction
-function approveSinglePayment(systemId, budYear, bookNo, docNo) {
+async function approveSinglePayment(systemId, budYear, bookNo, docNo) {
   const pay = db.payments.find(p => 
     Number(p.SystemID) === Number(systemId) && 
     Number(p.BudYear) === Number(budYear) && 
@@ -2345,8 +2326,8 @@ function approveSinglePayment(systemId, budYear, bookNo, docNo) {
   );
   if (!pay) return;
   
-  // Change payment status to approved
-  pay.BillType = '2'; // ชำระแล้ว
+  // Change payment status to approved (bill_type = 2)
+  pay.BillType = '2'; // ชำระแล้ว / อนุมัติแล้ว
   
   const ticket = db.tickets.find(t => 
     Number(t.SystemID) === Number(systemId) && 
@@ -2355,65 +2336,35 @@ function approveSinglePayment(systemId, budYear, bookNo, docNo) {
     Number(t.DocNo) === Number(docNo)
   );
   if (ticket) {
-    // Update old ticket to paid / interest paid success
     ticket.BillStat = 'I'; // ส่งดอกสำเร็จแล้ว
     ticket.BillType = '2'; // ชำระแล้ว
-    
-    // Generate BillBookNo & BillDocNo for tax receipt
-    const lastBookNo = db.tickets.reduce((max, t) => Math.max(max, Number(t.BillBookNo || 0)), 0);
-    const lastDocNo = db.tickets.reduce((max, t) => Math.max(max, Number(t.BillDocNo || 0)), 0);
-    ticket.BillBookNo = lastBookNo + 1;
-    ticket.BillDocNo = lastDocNo + 1;
-    
-    // Pawn Extension: CREATE A NEW TICKET representing renewal!
-    // Expiration date moves by 4 months
-    const oldExp = new Date(ticket.ExpDate);
-    const newExp = new Date(oldExp);
-    newExp.setMonth(newExp.getMonth() + 4);
-    
-    const pad = (num) => String(num).padStart(2, '0');
-    const newExpStr = `${newExp.getFullYear()}/${pad(newExp.getMonth()+1)}/${pad(newExp.getDate())}`;
-    
-    // AppDate is new renewal date
-    const today = new Date();
-    const newAppStr = `${today.getFullYear()}/${pad(today.getMonth()+1)}/${pad(today.getDate())} ${pad(today.getHours())}:${pad(today.getMinutes())}:00`;
-    
-    // Generate new document number
-    const maxDocNo = db.tickets.reduce((max, t) => Math.max(max, t.DocNo), 0);
-    
-    const renewedTicket = {
-      SystemID: ticket.SystemID,
-      BudYear: ticket.BudYear,
-      BookNo: ticket.BookNo,
-      DocNo: maxDocNo + 1,
-      BillType: '', // Blank = unpaid
-      BillDate: '',
-      BillNo: '',
-      BillBookNo: '',
-      BillDocNo: '',
-      Asstotal: ticket.Asstotal, // Keep same principal
-      Totalint: ticket.MonthInt * 1, // MonthInt * MonthTotal
-      MonthTotal: 1,
-      MonthInt: ticket.MonthInt,
-      AppDate: newAppStr,
-      ExpDate: newExpStr,
-      Model: ticket.Model,
-      BillStat: 'N', // N = active pawn
-      Id: ticket.Id
-    };
-    
-    db.tickets.push(renewedTicket);
   }
   
   saveDBTable('payments');
   saveDBTable('tickets');
   
-  alert('อนุมัติการชำระดอกเบี้ยเรียบร้อยแล้ว! ออกใบต่อตั๋วฉบับใหม่เข้าระบบสำเร็จ');
+  // อัปเดตข้อมูลขึ้น Cloudflare D1 ทันที
+  try {
+    const updatedTickets = ticket ? [ticket] : [];
+    await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        payments: [pay],
+        tickets: updatedTickets,
+        sync_time: new Date().toISOString()
+      })
+    });
+  } catch (err) {
+    console.warn('[approveSinglePayment] Cloudflare sync error:', err);
+  }
+  
+  alert('อนุมัติการชำระดอกเบี้ยเรียบร้อยแล้ว! (อัปเดต bill_type = 2 บน Cloudflare แล้ว)');
   renderAdminReconcile();
 }
 
 // Batch approve checked items
-function batchApprovePayments() {
+async function batchApprovePayments() {
   const checkboxes = document.getElementsByName('reconcile-checkbox');
   const selectedBills = [];
   checkboxes.forEach(cb => {
@@ -2426,8 +2377,8 @@ function batchApprovePayments() {
   }
   
   if (confirm(`คุณต้องการอนุมัติรายการชำระดอกเบี้ยที่เลือกทั้งหมด ${selectedBills.length} รายการ หรือไม่?`)) {
-    // คำนวณ maxDocNo ครั้งเดียวก่อน loop เพื่อป้องกัน DocNo ซ้ำกัน
-    let nextDocNo = db.tickets.reduce((max, t) => Math.max(max, Number(t.DocNo) || 0), 0) + 1;
+    const approvedPays = [];
+    const updatedTickets = [];
 
     selectedBills.forEach(key => {
       const parts = key.split('_');
@@ -2444,7 +2395,9 @@ function batchApprovePayments() {
         Number(p.DocNo) === docNo
       );
       if (pay) {
-        pay.BillType = '2'; // Approved
+        pay.BillType = '2'; // Approved (bill_type = 2)
+        approvedPays.push(pay);
+
         const ticket = db.tickets.find(t => 
           Number(t.SystemID) === sysId && 
           Number(t.BudYear) === budYear && 
@@ -2454,45 +2407,7 @@ function batchApprovePayments() {
         if (ticket) {
           ticket.BillStat = 'I';
           ticket.BillType = '2';
-          
-          const lastBookNo = db.tickets.reduce((max, t) => Math.max(max, Number(t.BillBookNo || 0)), 0);
-          const lastDocNo = db.tickets.reduce((max, t) => Math.max(max, Number(t.BillDocNo || 0)), 0);
-          ticket.BillBookNo = lastBookNo + 1;
-          ticket.BillDocNo = lastDocNo + 1;
-          
-          // Renewal ticket
-          const oldExp = new Date(ticket.ExpDate);
-          const newExp = new Date(oldExp);
-          newExp.setMonth(newExp.getMonth() + 4);
-          const pad = (num) => String(num).padStart(2, '0');
-          const newExpStr = `${newExp.getFullYear()}/${pad(newExp.getMonth()+1)}/${pad(newExp.getDate())}`;
-          
-          const today = new Date();
-          const newAppStr = `${today.getFullYear()}/${pad(today.getMonth()+1)}/${pad(today.getDate())} ${pad(today.getHours())}:${pad(today.getMinutes())}:00`;
-          
-          const maxDocNo = db.tickets.reduce((max, t) => Math.max(max, t.DocNo), 0);
-          
-          const renewedTicket = {
-            SystemID: ticket.SystemID,
-            BudYear: ticket.BudYear,
-            BookNo: ticket.BookNo,
-            DocNo: nextDocNo++,  // ใช้ nextDocNo ที่นับจาก pre-loop แล้ว increment
-            BillType: '',
-            BillDate: '',
-            BillNo: '',
-            BillBookNo: '',
-            BillDocNo: '',
-            Asstotal: ticket.Asstotal,
-            Totalint: ticket.MonthInt * 1, // MonthInt * MonthTotal
-            MonthTotal: 1,
-            MonthInt: ticket.MonthInt,
-            AppDate: newAppStr,
-            ExpDate: newExpStr,
-            Model: ticket.Model,
-            BillStat: 'N',
-            Id: ticket.Id
-          };
-          db.tickets.push(renewedTicket);
+          updatedTickets.push(ticket);
         }
       }
     });
@@ -2500,10 +2415,26 @@ function batchApprovePayments() {
     saveDBTable('payments');
     saveDBTable('tickets');
     
-    alert(`อนุมัติสำเร็จเรียบร้อย ${selectedBills.length} รายการ!`);
+    // อัปเดตข้อมูลขึ้น Cloudflare D1 ทันที
+    try {
+      await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payments: approvedPays,
+          tickets: updatedTickets,
+          sync_time: new Date().toISOString()
+        })
+      });
+    } catch (err) {
+      console.warn('[batchApprovePayments] Cloudflare sync error:', err);
+    }
+    
+    alert(`อนุมัติสำเร็จเรียบร้อย ${selectedBills.length} รายการ! (อัปเดต bill_type = 2 บน Cloudflare แล้ว)`);
     
     // Reset top check-all box
-    document.getElementById('reconcile-select-all').checked = false;
+    const selectAllEl = document.getElementById('reconcile-select-all');
+    if (selectAllEl) selectAllEl.checked = false;
     renderAdminReconcile();
   }
 }
