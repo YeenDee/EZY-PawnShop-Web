@@ -98,6 +98,12 @@ export async function onRequest(context) {
             const bno = String(p.BillNo || p.bill_no || '');
             if (!bno) continue;
             const slipUrl = await processSlip(p, bno);
+            const bType = String(p.BillType || p.bill_type || '9');
+            payStmts.push(
+              env.DB.prepare(
+                `UPDATE payments SET bill_type = ?, bill_date = CASE WHEN ? != '' THEN ? ELSE bill_date END WHERE bill_no = ?`
+              ).bind(bType, String(p.BillDate || p.bill_date || ''), String(p.BillDate || p.bill_date || ''), bno)
+            );
             payStmts.push(
               env.DB.prepare(
                 `INSERT OR REPLACE INTO payments (bill_no,system_id,bud_year,book_no,doc_no,bill_type,bill_date,slip,id) VALUES(?,?,?,?,?,?,?,?,?)`
@@ -107,7 +113,7 @@ export async function onRequest(context) {
                 String(p.BudYear || p.bud_year || ''),
                 String(p.BookNo || p.book_no || ''),
                 String(p.DocNo || p.doc_no || ''),
-                String(p.BillType || p.bill_type || '9'),
+                bType,
                 String(p.BillDate || p.bill_date || ''),
                 slipUrl,
                 String(p.Id || p.id || '')
@@ -123,11 +129,13 @@ export async function onRequest(context) {
             const budYr = String(t.BudYear || t.bud_year || '');
             const bookNo = String(t.BookNo || t.book_no || '');
             const docNo = String(t.DocNo || t.doc_no || '');
+            const tBillStat = String(t.BillStat || t.bill_stat || '9');
+            const tBillType = String(t.BillType || t.bill_type || '9');
 
             payStmts.push(
               env.DB.prepare(
-                `UPDATE tickets SET bill_stat='9', bill_type='9', bill_date=?, bill_no=? WHERE system_id=? AND bud_year=? AND book_no=? AND doc_no=?`
-              ).bind(bdate, bno, sysId, budYr, bookNo, docNo)
+                `UPDATE tickets SET bill_stat=?, bill_type=?, bill_date=?, bill_no=? WHERE system_id=? AND bud_year=? AND book_no=? AND doc_no=?`
+              ).bind(tBillStat, tBillType, bdate, bno, sysId, budYr, bookNo, docNo)
             );
           }
 

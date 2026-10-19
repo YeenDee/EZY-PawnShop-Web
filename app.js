@@ -2328,6 +2328,7 @@ async function approveSinglePayment(systemId, budYear, bookNo, docNo) {
   
   // Change payment status to approved (bill_type = 2)
   pay.BillType = '2'; // ชำระแล้ว / อนุมัติแล้ว
+  pay.bill_type = '2';
   
   const ticket = db.tickets.find(t => 
     Number(t.SystemID) === Number(systemId) && 
@@ -2338,23 +2339,33 @@ async function approveSinglePayment(systemId, budYear, bookNo, docNo) {
   if (ticket) {
     ticket.BillStat = 'I'; // ส่งดอกสำเร็จแล้ว
     ticket.BillType = '2'; // ชำระแล้ว
+    ticket.bill_stat = 'I';
+    ticket.bill_type = '2';
   }
   
   saveDBTable('payments');
   saveDBTable('tickets');
   
-  // อัปเดตข้อมูลขึ้น Cloudflare D1 ทันที
+  // อัปเดตข้อมูลขึ้น Cloudflare ทันที
   try {
     const updatedTickets = ticket ? [ticket] : [];
-    await fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        payments: [pay],
-        tickets: updatedTickets,
-        sync_time: new Date().toISOString()
+    const payload = {
+      payments: [pay],
+      tickets: updatedTickets,
+      sync_time: new Date().toISOString()
+    };
+    await Promise.all([
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }),
+      fetch('/api/payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       })
-    });
+    ]);
   } catch (err) {
     console.warn('[approveSinglePayment] Cloudflare sync error:', err);
   }
@@ -2396,6 +2407,7 @@ async function batchApprovePayments() {
       );
       if (pay) {
         pay.BillType = '2'; // Approved (bill_type = 2)
+        pay.bill_type = '2';
         approvedPays.push(pay);
 
         const ticket = db.tickets.find(t => 
@@ -2407,6 +2419,8 @@ async function batchApprovePayments() {
         if (ticket) {
           ticket.BillStat = 'I';
           ticket.BillType = '2';
+          ticket.bill_stat = 'I';
+          ticket.bill_type = '2';
           updatedTickets.push(ticket);
         }
       }
@@ -2415,17 +2429,25 @@ async function batchApprovePayments() {
     saveDBTable('payments');
     saveDBTable('tickets');
     
-    // อัปเดตข้อมูลขึ้น Cloudflare D1 ทันที
+    // อัปเดตข้อมูลขึ้น Cloudflare ทันที
     try {
-      await fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          payments: approvedPays,
-          tickets: updatedTickets,
-          sync_time: new Date().toISOString()
+      const payload = {
+        payments: approvedPays,
+        tickets: updatedTickets,
+        sync_time: new Date().toISOString()
+      };
+      await Promise.all([
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }),
+        fetch('/api/payment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
         })
-      });
+      ]);
     } catch (err) {
       console.warn('[batchApprovePayments] Cloudflare sync error:', err);
     }

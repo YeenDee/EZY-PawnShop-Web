@@ -38,39 +38,31 @@ export async function onRequest(context) {
       });
     }
 
-    const kvKey = `runno_${prefix}`;
-
     // Ensure config table exists
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)`
     ).run();
 
-    // Atomic increment: INSERT seq=1 if not exists, else UPDATE seq+1
-    // D1 does not support RETURNING in batch, so we do two steps:
-    // 1. Upsert with increment
-    // 2. Read current value
+    // Atomic increment of key 'runno': INSERT '1' if not exists, else UPDATE value + 1
     await env.DB.prepare(
-      `INSERT INTO config (key, value) VALUES (?, '1')
+      `INSERT INTO config (key, value) VALUES ('runno', '1')
        ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`
-    ).bind(kvKey).run();
+    ).run();
 
-    // Read back the current value
+    // Read back the current 'runno' value
     const row = await env.DB.prepare(
-      `SELECT value FROM config WHERE key = ?`
-    ).bind(kvKey).first();
+      `SELECT value FROM config WHERE key = 'runno'`
+    ).first();
 
     const seq = row ? parseInt(row.value, 10) : 1;
     const billNo = `${prefix}-${String(seq).padStart(4, '0')}`;
 
-    // Update general runno and last_bill_no in config table
+    // Clean up any legacy runno_Oxxxx or last_bill_no keys if present
     try {
-      await env.DB.batch([
-        env.DB.prepare(`INSERT INTO config (key, value) VALUES ('runno', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(String(seq)),
-        env.DB.prepare(`INSERT INTO config (key, value) VALUES ('last_bill_no', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(billNo)
-      ]);
+      await env.DB.prepare(`DELETE FROM config WHERE key LIKE 'runno_O%' OR key = 'last_bill_no'`).run();
     } catch(e) {}
 
-    console.log(`[billseq] Generated ${billNo} (key=${kvKey}, seq=${seq})`);
+    console.log(`[billseq] Generated ${billNo} (runno=${seq})`);
 
     return new Response(JSON.stringify({
       success: true,

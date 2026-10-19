@@ -378,10 +378,10 @@ export async function onRequest(context) {
               DO UPDATE SET
                 -- ป้องกัน: ถ้า bill_stat เป็น '9' (รอตรวจ), '2' (อนุมัติ), 'I' (ต่อแล้ว)
                 -- ห้าม overwrite ด้วยข้อมูลเก่าจาก MySQL (bill_stat='N')
-                bill_stat   = CASE WHEN bill_stat IN ('9','2','I') THEN bill_stat ELSE excluded.bill_stat END,
-                bill_type   = CASE WHEN bill_stat IN ('9','2','I') THEN bill_type ELSE excluded.bill_type END,
-                bill_date   = CASE WHEN bill_stat IN ('9','2','I') THEN bill_date ELSE excluded.bill_date END,
-                bill_no     = CASE WHEN bill_stat IN ('9','2','I') THEN bill_no   ELSE excluded.bill_no   END,
+                bill_stat   = CASE WHEN excluded.bill_stat = 'I' THEN 'I' WHEN bill_stat IN ('9','2','I') THEN bill_stat ELSE excluded.bill_stat END,
+                bill_type   = CASE WHEN excluded.bill_type = '2' THEN '2' WHEN bill_stat IN ('9','2','I') THEN bill_type ELSE excluded.bill_type END,
+                bill_date   = CASE WHEN excluded.bill_type = '2' AND excluded.bill_date != '' THEN excluded.bill_date WHEN bill_stat IN ('9','2','I') THEN bill_date ELSE excluded.bill_date END,
+                bill_no     = CASE WHEN excluded.bill_type = '2' AND excluded.bill_no != '' THEN excluded.bill_no WHEN bill_stat IN ('9','2','I') THEN bill_no ELSE excluded.bill_no END,
                 asstotal    = excluded.asstotal,
                 month_total = excluded.month_total,
                 month_int   = excluded.month_int,
@@ -437,9 +437,23 @@ export async function onRequest(context) {
 
           if (!bno) continue;
 
+          const bType = String(p.BillType || p.bill_type || '2');
+          const bDate = String(p.BillDate || p.bill_date || '');
+
+          // Direct UPDATE to guarantee bill_type is updated regardless of table constraint variations
           payStmts.push(
             env.DB.prepare(`
-              INSERT INTO payments
+              UPDATE payments
+              SET bill_type = ?,
+                  bill_date = CASE WHEN ? != '' THEN ? ELSE bill_date END
+              WHERE bill_no = ?
+            `).bind(bType, bDate, bDate, bno)
+          );
+
+          // INSERT OR REPLACE to ensure row exists
+          payStmts.push(
+            env.DB.prepare(`
+              INSERT OR REPLACE INTO payments
               (
                 bill_no,
                 system_id,
@@ -451,30 +465,15 @@ export async function onRequest(context) {
                 slip,
                 id
               )
-
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-
-              ON CONFLICT(
-                bill_no,
-                system_id,
-                bud_year,
-                book_no,
-                doc_no
-              )
-              DO UPDATE SET
-
-                bill_type = excluded.bill_type,
-                bill_date = excluded.bill_date,
-                slip = excluded.slip,
-                id = excluded.id
             `).bind(
               bno,
               String(p.SystemID || p.system_id || ''),
               String(p.BudYear || p.bud_year || ''),
               String(p.BookNo || p.book_no || ''),
               String(p.DocNo || p.doc_no || ''),
-              String(p.BillType || p.bill_type || '9'),
-              String(p.BillDate || p.bill_date || ''),
+              bType,
+              bDate,
               String(p.Slip || p.slip || ''),
               String(p.Id || p.id || '')
             )
@@ -483,6 +482,33 @@ export async function onRequest(context) {
 
         for (const chunk of chunkArray(payStmts, CHUNK)) {
           await env.DB.batch(chunk);
+        }
+
+        // Also update KV if available to ensure cache consistency
+        if (env.PAWNSHOP_KV) {
+          try {
+            const raw = await env.PAWNSHOP_KV.get('db_sync_latest');
+            let prev = {};
+            if (raw) { try { prev = JSON.parse(raw); } catch(e){} }
+            let curPayments = (prev.payments || []).map(cp => ({ ...cp }));
+            for (const p of data.payments) {
+              const bno   = String(p.BillNo   || p.bill_no   || '');
+              const sysId = String(p.SystemID || p.system_id || '');
+              const docNo = String(p.DocNo    || p.doc_no    || '');
+              const pKV = { ...p, BillType: String(p.BillType || p.bill_type || '2'), bill_type: String(p.BillType || p.bill_type || '2') };
+              delete pKV.Slip;
+              delete pKV.slip;
+              const idx = curPayments.findIndex(cp =>
+                String(cp.BillNo   || cp.bill_no)   === bno &&
+                String(cp.SystemID || cp.system_id) === sysId &&
+                String(cp.DocNo    || cp.doc_no)    === docNo
+              );
+              if (idx > -1) curPayments[idx] = { ...curPayments[idx], ...pKV };
+              else curPayments.push(pKV);
+            }
+            prev.payments = curPayments;
+            await env.PAWNSHOP_KV.put('db_sync_latest', JSON.stringify(prev));
+          } catch(e) {}
         }
       }
 
