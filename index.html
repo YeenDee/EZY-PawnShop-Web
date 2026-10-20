@@ -49,7 +49,7 @@
       <div class="login-logo-container">
         <img src="Logo.ico" alt="EZY Pawnshop Logo">
         <h2>EZY PAWNSHOP 2006</h2>
-        <p>WEB APPLICATION PORTAL Version 1.65</p>
+        <p>WEB APPLICATION PORTAL Version 1.66</p>
       </div>
       
       <form id="login-form" onsubmit="event.preventDefault(); handleLogin();">
@@ -484,6 +484,9 @@
               * หลังจากเวลา <strong style="color: var(--primary-red);">16.00 น.</strong> พนักงานปิดงบรายวัน ตรวจสอบสลิปเทียบกับ Book Bank และกดเปลี่ยนสถานะเป็น อนุมัติแล้ว
             </p>
             <div style="display: flex; gap: 8px;">
+              <button type="button" class="btn btn-secondary" id="btn-reconcile-refresh" onclick="refreshAdminReconcile()" style="width: auto; padding: 10px 16px; font-size: 14px;">
+                <i class="fa-solid fa-rotate"></i> รีเฟรชข้อมูล (Refresh)
+              </button>
               <button class="btn btn-primary" style="width: auto; padding: 10px 16px; font-size: 14px; background: var(--success-green); box-shadow: none;" onclick="batchApprovePayments(true)">
                 <i class="fa-solid fa-check"></i> อนุมัติรายการที่เลือกทั้งหมด
               </button>
@@ -505,7 +508,8 @@
                   <th>วันที่ชำระเงิน</th>
                   <th>ตั๋วจำนำ</th>
                   <th>สลิปโอนเงิน</th>
-                  <th>จำนวนดอกเบี้ย</th>
+                  <th style="text-align: right;">จำนวนดอกเบี้ย</th>
+                  <th style="text-align: right;">ยอดรวมดอกเบี้ย</th>
                   <th>สถานะ</th>
                   <th style="text-align: center;">ดูรายละเอียด</th>
                 </tr>
@@ -1010,6 +1014,6 @@
   </div>
 
   <!-- JavaScript Logics -->
-  <script src="app.js?v=165"></script>
+  <script src="app.js?v=166"></script>
 </body>
 </html>

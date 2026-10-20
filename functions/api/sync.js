@@ -140,6 +140,20 @@ export async function onRequest(context) {
         `)
       ]);
 
+      // Ensure payments table has composite PK (bill_no, system_id, bud_year, book_no, doc_no)
+      try {
+        const pkInfo = await env.DB.prepare(`PRAGMA table_info(payments)`).all();
+        const pkCols = (pkInfo.results || []).filter(c => c.pk > 0);
+        if (pkCols.length === 1 && pkCols[0].name === 'bill_no') {
+          await env.DB.batch([
+            env.DB.prepare(`CREATE TABLE IF NOT EXISTS payments_v2 (bill_no TEXT, system_id TEXT, bud_year TEXT, book_no TEXT, doc_no TEXT, bill_type TEXT, bill_date TEXT, slip TEXT, id TEXT, PRIMARY KEY (bill_no, system_id, bud_year, book_no, doc_no))`),
+            env.DB.prepare(`INSERT OR IGNORE INTO payments_v2 SELECT * FROM payments`),
+            env.DB.prepare(`DROP TABLE payments`),
+            env.DB.prepare(`ALTER TABLE payments_v2 RENAME TO payments`)
+          ]);
+        }
+      } catch(migErr) {}
+
       const CHUNK = 100;
 
       const chunkArray = (arr, size) => {

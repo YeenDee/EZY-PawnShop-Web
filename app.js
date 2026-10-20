@@ -2109,7 +2109,7 @@ function renderAdminReconcile() {
   }
   
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--text-light); padding: 30px;">ไม่พบรายการชำระเงินที่ต้องการ</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--text-light); padding: 30px;">ไม่พบรายการชำระเงินที่ต้องการ</td></tr>`;
     updateSystemVersionDisplay();
     return;
   }
@@ -2150,17 +2150,34 @@ function renderAdminReconcile() {
       </label>
     ` : '<i class="fa-solid fa-circle-check" style="color: var(--success-green);"></i>';
     
+    // Calculate total interest for this BillNo across all associated tickets
+    const sameBillPays = (db.payments || []).filter(item => String(item.BillNo || item.bill_no) === String(p.BillNo || p.bill_no));
+    let billTotalInterest = 0;
+    sameBillPays.forEach(bp => {
+      const bt = (db.tickets || []).find(t => 
+        Number(t.SystemID) === Number(bp.SystemID) && 
+        Number(t.BudYear) === Number(bp.BudYear) && 
+        Number(t.BookNo) === Number(bp.BookNo) && 
+        Number(t.DocNo) === Number(bp.DocNo)
+      );
+      billTotalInterest += bt ? getSafeInterest(bt) : (Number(bp.Totalint || bp.totalint || bp.Interest || 0));
+    });
+
+    const customerTel = cust && cust.Tel ? cust.Tel : (cust && cust.tel ? cust.tel : '-');
+
     tr.innerHTML = `
       <td style="text-align: center;">${checkboxHtml}</td>
       <td class="number" style="font-weight: 600;">${p.BillNo}</td>
       <td>
         <span style="font-weight: 600;">${customerName}</span><br>
-        <span class="number" style="font-size: 12px; color: var(--text-medium);">${p.Id}</span>
+        <span class="number" style="font-size: 12px; color: var(--text-medium);">${p.Id}</span><br>
+        <span class="number" style="font-size: 12px; color: var(--text-medium);"><i class="fa-solid fa-phone" style="font-size: 10px; margin-right: 4px;"></i>${customerTel}</span>
       </td>
       <td class="number">${formattedDate}</td>
       <td style="font-size: 13px; max-width: 200px;">${ticketDetails}</td>
       <td style="text-align: center;">${slipHtml}</td>
       <td class="number" style="font-weight: 700; color: var(--primary-red); text-align: right;">${interestAmtVal.toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
+      <td class="number" style="font-weight: 700; color: var(--accent-gold); text-align: right;">${billTotalInterest.toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
       <td>${statusBadge}</td>
       <td style="text-align: center;">
         <button class="btn btn-secondary" style="width: auto; padding: 6px 10px; font-size: 12px; border-radius: 6px;" onclick="showReconcileDetailModal('${p.SystemID}', '${p.BudYear}', '${p.BookNo}', '${p.DocNo}')">
@@ -2172,6 +2189,26 @@ function renderAdminReconcile() {
     tbody.appendChild(tr);
   });
   updateSystemVersionDisplay();
+}
+
+async function refreshAdminReconcile() {
+  const btn = document.getElementById('btn-reconcile-refresh');
+  const oldText = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังดึงข้อมูลล่าสุด...';
+  }
+  try {
+    await refreshCloudData(false);
+    renderAdminReconcile();
+  } catch (err) {
+    console.error('[refreshAdminReconcile] Error:', err);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = oldText || '<i class="fa-solid fa-rotate"></i> รีเฟรชข้อมูล (Refresh)';
+    }
+  }
 }
 
 function applyReconcileFilters() {
@@ -2510,8 +2547,8 @@ function renderAdminReport() {
     }
   }
   
-  // Show approved payments
-  let approved = db.payments.filter(p => p.BillType === '2');
+  // Show payments: both approved (2) and pending (9)
+  let approved = db.payments.filter(p => p.BillType === '2' || p.BillType === '9' || p.bill_type === '2' || p.bill_type === '9');
   if (systemIdVal !== 'all') {
     approved = approved.filter(p => Number(p.SystemID) === Number(systemIdVal));
   }
@@ -2681,7 +2718,9 @@ function renderAdminReport() {
       <td>${model}</td>
       <td class="number" style="text-align: right;">${asstotal.toLocaleString('th-TH')}</td>
       <td class="number" style="text-align: right; font-weight: 700; color: var(--primary-red);">${interest.toLocaleString('th-TH', {minimumFractionDigits:2})}</td>
-      <td style="text-align: left;"><span class="ticket-badge badge-paid" style="background-color: var(--success-green); padding: 4px 8px; border-radius: 4px; display: inline-block;">อนุมัติแล้ว</span></td>
+      <td style="text-align: left;">
+        ${(p.BillType === '2' || p.bill_type === '2') ? '<span class="ticket-badge badge-paid" style="background-color: var(--success-green); padding: 4px 8px; border-radius: 4px; display: inline-block;">อนุมัติแล้ว</span>' : '<span class="ticket-badge badge-pending" style="background-color: var(--accent-gold); color: #fff; padding: 4px 8px; border-radius: 4px; display: inline-block;">รอการตรวจสอบ</span>'}
+      </td>
     `;
     tbody.appendChild(tr);
   });
