@@ -18,11 +18,12 @@ CF_API_TOKEN   = _cfg.get('cloudflare', 'api_token', fallback='')
 PROJECT_NAME   = 'ezy-pawnshop2006'
 BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
 
+_ctx = ssl.create_default_context()
 try:
     import certifi
-    _ctx = ssl.create_default_context(cafile=certifi.where())
+    _ctx.load_verify_locations(cafile=certifi.where())
 except Exception:
-    _ctx = ssl.create_default_context()
+    pass
 
 # ไฟล์ที่ต้อง deploy ขึ้น Cloudflare Pages (ห้ามนำไฟล์ความลับหรือฐานข้อมูลขึ้น Static CDN)
 UPLOAD_FILES = [

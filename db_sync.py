@@ -30,13 +30,15 @@ except Exception:
 
 BASE_DIR = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
 
-# ใช้ SSL Context มาตรฐานที่ตรวจสอบใบรับรอง (ป้องกัน Man-in-the-Middle)
+# ใช้ SSL Context มาตรฐานที่ตรวจสอบใบรับรอง (รวมทั้ง Windows OS Store และ certifi)
 def _create_ssl_context():
+    ctx = ssl.create_default_context()
     try:
         import certifi
-        return ssl.create_default_context(cafile=certifi.where())
+        ctx.load_verify_locations(cafile=certifi.where())
     except Exception:
-        return ssl.create_default_context()
+        pass
+    return ctx
 
 _ssl_ctx = _create_ssl_context()
 
@@ -621,6 +623,7 @@ def upload_to_cloudflare_r2(filename, filepath):
                     data=file_bytes,
                     headers={
                         "Content-Type": "application/zip",
+                        "User-Agent": "EZY-PawnShop-Sync/1.0",
                         "X-Sync-Secret": CF_SYNC_SECRET
                     },
                     method='PUT'
