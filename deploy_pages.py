@@ -18,27 +18,34 @@ CF_API_TOKEN   = _cfg.get('cloudflare', 'api_token', fallback='')
 PROJECT_NAME   = 'ezy-pawnshop2006'
 BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
 
-_ctx = ssl.create_default_context()
-_ctx.check_hostname = False
-_ctx.verify_mode = ssl.CERT_NONE
+try:
+    import certifi
+    _ctx = ssl.create_default_context(cafile=certifi.where())
+except Exception:
+    _ctx = ssl.create_default_context()
 
-# ไฟล์ที่ต้อง deploy ขึ้น Cloudflare Pages
+# ไฟล์ที่ต้อง deploy ขึ้น Cloudflare Pages (ห้ามนำไฟล์ความลับหรือฐานข้อมูลขึ้น Static CDN)
 UPLOAD_FILES = [
-    ('index.html',                  '/index.html'),
-    ('app.js',                      '/app.js'),
-    ('app.css',                     '/app.css'),
-    ('manifest.json',               '/manifest.json'),
-    ('sw.js',                       '/sw.js'),
-    ('icon-192.png',                '/icon-192.png'),
-    ('icon-512.png',                '/icon-512.png'),
-    ('Logo.ico',                    '/Logo.ico'),
-    ('pawn_config.json',            '/pawn_config.json'),
-    ('Logobank-kb.jpg',             '/Logobank-kb.jpg'),
-    ('Logobank-ktb.jpg',            '/Logobank-ktb.jpg'),
-    ('functions/api/login.js',      '/functions/api/login.js'),
-    ('functions/api/sync.js',       '/functions/api/sync.js'),
-    ('functions/api/config.js',     '/functions/api/config.js'),
-    ('functions/api/payment.js',    '/functions/api/payment.js'),
+    ('index.html',                        '/index.html'),
+    ('app.js',                            '/app.js'),
+    ('app.css',                           '/app.css'),
+    ('manifest.json',                     '/manifest.json'),
+    ('sw.js',                             '/sw.js'),
+    ('icon-192.png',                      '/icon-192.png'),
+    ('icon-512.png',                      '/icon-512.png'),
+    ('Logo.ico',                          '/Logo.ico'),
+    ('pawn_config.json',                  '/pawn_config.json'),
+    ('Logobank-kb.jpg',                   '/Logobank-kb.jpg'),
+    ('Logobank-ktb.jpg',                  '/Logobank-ktb.jpg'),
+    ('functions/api/login.js',            '/functions/api/login.js'),
+    ('functions/api/sync.js',             '/functions/api/sync.js'),
+    ('functions/api/config.js',           '/functions/api/config.js'),
+    ('functions/api/payment.js',          '/functions/api/payment.js'),
+    ('functions/api/users.js',            '/functions/api/users.js'),
+    ('functions/api/billseq.js',          '/functions/api/billseq.js'),
+    ('functions/api/backups.js',          '/functions/api/backups.js'),
+    ('functions/api/backup/[[filename]].js', '/functions/api/backup/[[filename]].js'),
+    ('functions/Slip/[file].js',          '/functions/Slip/[file].js'),
 ]
 
 def cf_request(method, url, body=None, content_type='application/json'):

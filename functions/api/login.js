@@ -1,15 +1,102 @@
 /**
  * Cloudflare Pages Function: /api/login
- * Handles customer and admin authentication against D1 SQL database
+ * Handles customer authentication and server-side OTP verification against D1 SQL database
  */
+
+const ALLOWED_ORIGINS = [
+  'https://ezy-pawnshop2006.rainbow-ocean.site',
+  'https://ezy-pawnshop-web.pages.dev',
+  'http://localhost:8000',
+  'http://127.0.0.1:8000'
+];
+
+function getCorsHeaders(request) {
+  const origin = request.headers.get('Origin') || '';
+  const allowOrigin = ALLOWED_ORIGINS.includes(origin) || origin.endsWith('.ezy-pawnshop-web.pages.dev')
+    ? origin
+    : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+    'Vary': 'Origin'
+  };
+}
+
+function bufToHex(buffer) {
+  return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function timingSafeEqual(a, b) {
+  const strA = String(a || '');
+  const strB = String(b || '');
+  if (strA.length !== strB.length) return false;
+  let diff = 0;
+  for (let i = 0; i < strA.length; i++) {
+    diff |= strA.charCodeAt(i) ^ strB.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+async function getSystemSecret(env) {
+  if (env.AUTH_SECRET) return String(env.AUTH_SECRET);
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS _sys_secrets (key TEXT PRIMARY KEY, value TEXT)`).run();
+  let row = await env.DB.prepare(`SELECT value FROM _sys_secrets WHERE key = 'jwt_secret'`).first();
+  if (!row || !row.value) {
+    const rnd = new Uint8Array(32);
+    crypto.getRandomValues(rnd);
+    const newSecret = bufToHex(rnd);
+    await env.DB.prepare(`INSERT OR IGNORE INTO _sys_secrets (key, value) VALUES ('jwt_secret', ?)`).bind(newSecret).run();
+    row = await env.DB.prepare(`SELECT value FROM _sys_secrets WHERE key = 'jwt_secret'`).first();
+  }
+  return row.value;
+}
+
+async function hmacSha256Hex(message, secret) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+  return bufToHex(sig);
+}
+
+async function signToken(payloadObj, secret) {
+  const jsonBytes = new TextEncoder().encode(JSON.stringify(payloadObj));
+  let bin = '';
+  jsonBytes.forEach(b => { bin += String.fromCharCode(b); });
+  const b64 = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const sig = await hmacSha256Hex(b64, secret);
+  return `${b64}.${sig}`;
+}
+
+async function verifyToken(tokenStr, secret) {
+  if (!tokenStr || typeof tokenStr !== 'string') return null;
+  const parts = tokenStr.split('.');
+  if (parts.length !== 2) return null;
+  const [b64, sig] = parts;
+  const expectedSig = await hmacSha256Hex(b64, secret);
+  if (!timingSafeEqual(sig, expectedSig)) return null;
+  try {
+    const pad = b64.replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(pad);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const payload = JSON.parse(new TextDecoder().decode(bytes));
+    if (!payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch (e) {
+    return null;
+  }
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
-
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
-  };
+  const corsHeaders = getCorsHeaders(request);
 
   if (request.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -18,51 +105,135 @@ export async function onRequest(context) {
   if (request.method === 'POST') {
     try {
       const data = await request.json();
+      const action = String(data.action || 'login').toLowerCase();
+
+      if (!env.DB) {
+        return new Response(JSON.stringify({ success: false, error: 'ฐานข้อมูล D1 ไม่พร้อมใช้งาน' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+
+      // ==================== STEP 2: VERIFY OTP & ISSUE CUSTOMER TOKEN ====================
+      if (action === 'verify_otp') {
+        const otpToken = String(data.otp_token || '').trim();
+        const enteredOtp = String(data.otp || '').trim();
+        const secret = await getSystemSecret(env);
+
+        const payload = await verifyToken(otpToken, secret);
+        if (!payload || payload.role !== 'customer_otp') {
+          return new Response(JSON.stringify({ success: false, error: 'รหัส OTP หมดอายุหรือไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+
+        const enteredHash = await hmacSha256Hex(enteredOtp, secret);
+        if (!timingSafeEqual(enteredHash, payload.otpHash)) {
+          return new Response(JSON.stringify({ success: false, error: 'รหัส OTP ไม่ถูกต้อง กรุณากรอกใหม่อีกครั้ง' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+
+        const custId = String(payload.sub || '');
+        const custCode = String(payload.custCode || custId);
+        const plainId = custId.replace(/[^0-9a-zA-Z]/g, '');
+
+        const { results: matchedCusts } = await env.DB.prepare(`
+          SELECT id as Id, cust_code as CustCode, name as Name, tel as Tel
+          FROM customers
+          WHERE id = ? OR cust_code = ? OR replace(id, '-', '') = ? OR replace(cust_code, '-', '') = ?
+        `).bind(custId, custCode, plainId, plainId).all();
+
+        if (!matchedCusts || matchedCusts.length === 0) {
+          return new Response(JSON.stringify({ success: false, error: 'ไม่พบข้อมูลลูกค้าในระบบ' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+
+        const customer = matchedCusts[0];
+        const { results: tickets } = await env.DB.prepare(`
+          SELECT system_id as SystemID, bud_year as BudYear, book_no as BookNo, doc_no as DocNo, bill_stat as BillStat, bill_type as BillType, bill_date as BillDate, bill_no as BillNo, asstotal as Asstotal, month_total as MonthTotal, month_int as MonthInt, totalint as Totalint, app_date as AppDate, exp_date as ExpDate, model as Model, id as Id, cust_code as CustCode
+          FROM tickets
+          WHERE id = ? OR cust_code = ? OR replace(id, '-', '') = ? OR replace(cust_code, '-', '') = ?
+        `).bind(customer.Id, customer.CustCode || customer.Id, plainId, plainId).all();
+
+        const sessionToken = await signToken({
+          sub: customer.Id,
+          custCode: customer.CustCode || customer.Id,
+          role: 'customer',
+          exp: Date.now() + 4 * 60 * 60 * 1000 // อายุเซสชันลูกค้า 4 ชั่วโมง
+        }, secret);
+
+        return new Response(JSON.stringify({
+          success: true,
+          token: sessionToken,
+          customer,
+          tickets: tickets || []
+        }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+
+      // ==================== STEP 1: CHECK CUSTOMER ID & PHONE -> GENERATE OTP ====================
       const inputId = String(data.id || '').trim();
       const inputContact = String(data.contact || '').trim();
 
       const plainId = inputId.replace(/[^0-9a-zA-Z]/g, '');
       const plainContact = inputContact.replace(/[^0-9]/g, '');
 
-      if (!plainId) {
-        return new Response(JSON.stringify({ success: false, error: 'กรุณาระบุเลขบัตรประชาชน หรือรหัสลูกค้า' }), {
+      // บังคับต้องระบุทั้งเลขบัตรประชาชน/รหัสลูกค้า และเบอร์โทรศัพท์อย่างน้อย 9 หลัก (ป้องกันการเว้นว่างเบอร์โทรเพื่อข้ามการเช็ค)
+      if (!plainId || !plainContact || plainContact.length < 9) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'กรุณาระบุเลขบัตรประชาชน และเบอร์โทรศัพท์มือถือให้ครบถ้วน'
+        }), {
           status: 400,
           headers: { 'Content-Type': 'application/json', ...corsHeaders }
         });
       }
 
-      if (env.DB) {
-        // Query D1 customer
-        const { results: matchedCusts } = await env.DB.prepare(`
-          SELECT id as Id, cust_code as CustCode, name as Name, tel as Tel
-          FROM customers
-          WHERE id = ? OR cust_code = ? OR replace(id, '-', '') = ? OR replace(cust_code, '-', '') = ?
-        `).bind(inputId, inputId, plainId, plainId).all();
+      const { results: matchedCusts } = await env.DB.prepare(`
+        SELECT id as Id, cust_code as CustCode, name as Name, tel as Tel
+        FROM customers
+        WHERE id = ? OR cust_code = ? OR replace(id, '-', '') = ? OR replace(cust_code, '-', '') = ?
+      `).bind(inputId, inputId, plainId, plainId).all();
 
-        if (matchedCusts && matchedCusts.length > 0) {
-          const customer = matchedCusts[0];
-          const dbTel = String(customer.Tel || '').replace(/\D/g, '');
+      if (matchedCusts && matchedCusts.length > 0) {
+        const customer = matchedCusts[0];
+        const dbTel = String(customer.Tel || '').replace(/\D/g, '');
 
-          // Verify phone if contact provided
-          const phoneValid = !plainContact || !dbTel || dbTel === plainContact ||
-            (dbTel.length >= 9 && plainContact.length >= 9 && (dbTel.endsWith(plainContact) || plainContact.endsWith(dbTel)));
+        // ต้องมีเบอร์โทรศัพท์ในฐานข้อมูล และตรงกับที่กรอกเข้ามาเท่านั้น
+        const phoneValid = dbTel.length >= 9 && (
+          dbTel === plainContact ||
+          (dbTel.endsWith(plainContact.slice(-9)) && plainContact.endsWith(dbTel.slice(-9)))
+        );
 
-          if (phoneValid) {
-            // Query tickets for this customer
-            const { results: tickets } = await env.DB.prepare(`
-              SELECT system_id as SystemID, bud_year as BudYear, book_no as BookNo, doc_no as DocNo, bill_stat as BillStat, bill_type as BillType, bill_date as BillDate, bill_no as BillNo, asstotal as Asstotal, month_total as MonthTotal, month_int as MonthInt, totalint as Totalint, app_date as AppDate, exp_date as ExpDate, model as Model, id as Id, cust_code as CustCode
-              FROM tickets
-              WHERE id = ? OR cust_code = ? OR replace(id, '-', '') = ? OR replace(cust_code, '-', '') = ?
-            `).bind(customer.Id, customer.CustCode || customer.Id, plainId, plainId).all();
+        if (phoneValid) {
+          const secret = await getSystemSecret(env);
+          const rnd = new Uint32Array(1);
+          crypto.getRandomValues(rnd);
+          const otpCode = String(100000 + (rnd[0] % 900000));
+          const otpHash = await hmacSha256Hex(otpCode, secret);
 
-            return new Response(JSON.stringify({
-              success: true,
-              customer,
-              tickets: tickets || []
-            }), {
-              headers: { 'Content-Type': 'application/json', ...corsHeaders }
-            });
-          }
+          const otpToken = await signToken({
+            sub: customer.Id,
+            custCode: customer.CustCode || customer.Id,
+            role: 'customer_otp',
+            otpHash,
+            exp: Date.now() + 5 * 60 * 1000 // OTP หมดอายุใน 5 นาที
+          }, secret);
+
+          return new Response(JSON.stringify({
+            success: true,
+            otp_required: true,
+            otp_token: otpToken,
+            otp_preview: otpCode
+          }), {
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
         }
       }
 

@@ -1,3 +1,9 @@
 option.ini
+last_cloud_sync.json
+db_sync - Copy.py
 *.log
+*.exe
+*.spec
+build/
+dist/
 __pycache__/

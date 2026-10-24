@@ -30,10 +30,15 @@ except Exception:
 
 BASE_DIR = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
 
-# Bypass SSL verification (แก้ปัญหา Windows SSL Certificate)
-_ssl_ctx = ssl.create_default_context()
-_ssl_ctx.check_hostname = False
-_ssl_ctx.verify_mode = ssl.CERT_NONE
+# ใช้ SSL Context มาตรฐานที่ตรวจสอบใบรับรอง (ป้องกัน Man-in-the-Middle)
+def _create_ssl_context():
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+_ssl_ctx = _create_ssl_context()
 
 # Custom JSON encoder: แปลง datetime / Decimal / bytes จาก MySQL -> string
 class MySQLJSONEncoder(json.JSONEncoder):
@@ -105,10 +110,16 @@ def _load_config():
         os.environ.get('CF_API_TOKEN', '').strip() or
         'PUT_YOUR_CLOUDFLARE_API_TOKEN_HERE'
     )
+    sync_secret = (
+        cfg.get('cloudflare', 'sync_secret', fallback='').strip() or
+        os.environ.get('CF_SYNC_SECRET', '').strip() or
+        '9f4a8c2e7b1d6f3a5c8e0b2d4f6a8c1e3b5d7f9a2c4e6b8d0f1a3c5e7b9d2f4a'
+    )
     cf = {
         'account_id':   cfg.get('cloudflare', 'account_id',   fallback='').strip(),
         'api_token':    cf_token,
         'kv_namespace': cfg.get('cloudflare', 'kv_namespace', fallback='').strip(),
+        'sync_secret':  sync_secret,
     }
 
     return mysql, cf
@@ -125,6 +136,7 @@ MYSQL_DB       = _MYSQL_CFG['database']
 CF_ACCOUNT_ID   = _CF_CFG['account_id']
 CF_API_TOKEN    = _CF_CFG['api_token']
 CF_KV_NAMESPACE = _CF_CFG['kv_namespace']
+CF_SYNC_SECRET  = _CF_CFG['sync_secret']
 CF_R2_ENDPOINT  = f'https://{CF_ACCOUNT_ID}.r2.cloudflarestorage.com'
 CF_R2_BUCKET    = 'ezy-pawnshop-backups'
 
@@ -260,11 +272,16 @@ def upload_chunked_to_pages(customers_data, tickets_data, payments_data=None, cl
     
     # เลือก endpoint ที่ใช้งานได้
     working_ep = None
+    sync_headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "EZY-PawnShop-Sync/1.0",
+        "X-Sync-Secret": CF_SYNC_SECRET
+    }
     for ep in endpoints:
         try:
             test_payload = json.dumps({"customers": [], "tickets": [], "payments": [], "sync_time": "test"}, ensure_ascii=False)
             req = urllib.request.Request(ep, data=test_payload.encode('utf-8'), 
-                headers={"Content-Type": "application/json", "User-Agent": "EZY-PawnShop-Sync/1.0"}, method='POST')
+                headers=sync_headers, method='POST')
             with urllib.request.urlopen(req, timeout=15, context=_ssl_ctx) as resp:
                 working_ep = ep
                 print(f"[+] เชื่อมต่อ {ep} สำเร็จ")
@@ -279,7 +296,7 @@ def upload_chunked_to_pages(customers_data, tickets_data, payments_data=None, cl
     def post_chunk(payload_dict):
         data_str = json.dumps(payload_dict, ensure_ascii=False, cls=MySQLJSONEncoder)
         req = urllib.request.Request(working_ep, data=data_str.encode('utf-8'),
-            headers={"Content-Type": "application/json", "User-Agent": "EZY-PawnShop-Sync/1.0"}, method='POST')
+            headers=sync_headers, method='POST')
         with urllib.request.urlopen(req, timeout=60, context=_ssl_ctx) as resp:
             return json.loads(resp.read().decode('utf-8'))
     
@@ -602,7 +619,10 @@ def upload_to_cloudflare_r2(filename, filepath):
                 req = urllib.request.Request(
                     url,
                     data=file_bytes,
-                    headers={"Content-Type": "application/zip"},
+                    headers={
+                        "Content-Type": "application/zip",
+                        "X-Sync-Secret": CF_SYNC_SECRET
+                    },
                     method='PUT'
                 )
                 with urllib.request.urlopen(req, timeout=60, context=_ssl_ctx) as response:

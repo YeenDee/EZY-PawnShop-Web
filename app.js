@@ -1,113 +1,33 @@
 // EZY Pawnshop 2006 Web PWA - Application Logic
 
 // ==================== 1. DATABASE & STATE INITIALIZATION ====================
-const DEFAULT_CUSTOMERS = [
-  { Id: '1-2345-67890-12-3', Name: 'สมชาย ใจดี', Tel: '0812345678' },
-  { Id: '3-1002-34567-89-0', Name: 'สมศรี มีสุข', Tel: '0898765432' }
-];
+const DEFAULT_CUSTOMERS = [];
+const DEFAULT_USERS = [];
+const DEFAULT_TICKETS = [];
+const DEFAULT_PAYMENTS = [];
 
-const DEFAULT_USERS = [
-  { UserID: 'admin', Password: 'admin123', Name: 'ผู้จัดการ ชัยชนะ', Position: 'ผู้จัดการ' },
-  { UserID: '1-1111-11111-11-1', Password: 'admin123', Name: 'ผู้จัดการ ชัยชนะ (สำรอง)', Position: 'ผู้จัดการ' },
-  { UserID: '2-2222-22222-22-2', Password: 'password123', Name: 'นารี มีทอง', Position: 'พนักงานต้อนรับ' }
-];
+// HTML Escaping utility to prevent Stored/DOM Cross-Site Scripting (XSS)
+function escapeHtml(val) {
+  if (val === null || val === undefined) return '';
+  return String(val)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
-const DEFAULT_TICKETS = [
-  {
-    SystemID: 1,
-    BudYear: 2569,
-    BookNo: 1,
-    DocNo: 1001,
-    BillType: '',
-    BillDate: '',
-    BillNo: '',
-    BillBookNo: '',
-    BillDocNo: '',
-    Asstotal: 45000,
-    Totalint: 562.50,
-    MonthTotal: 1,
-    MonthInt: 562.50, // 562.50 Baht per month (derived from 45000 * 1.25%)
-    AppDate: '2026/06/15 10:00:00',
-    ExpDate: '2026/10/15',
-    Model: 'สร้อยคอทองคำ น้ำหนัก 1 บาท (จำนวน 1 เส้น)',
-    BillStat: 'N', // N = Pawned/จำนำ
-    Id: '1-2345-67890-12-3'
-  },
-  {
-    SystemID: 1,
-    BudYear: 2569,
-    BookNo: 1,
-    DocNo: 1002,
-    BillType: '',
-    BillDate: '',
-    BillNo: '',
-    BillBookNo: '',
-    BillDocNo: '',
-    Asstotal: 20000,
-    Totalint: 300.00,
-    MonthTotal: 1,
-    MonthInt: 300.00, // 300.00 Baht per month (derived from 20000 * 1.5%)
-    AppDate: '2026/06/20 14:30:00',
-    ExpDate: '2026/10/20',
-    Model: 'แหวนเพชรเม็ดเดี่ยว 0.5 กะรัต (จำนวน 1 วง)',
-    BillStat: 'N',
-    Id: '1-2345-67890-12-3'
-  },
-  {
-    SystemID: 2,
-    BudYear: 2569,
-    BookNo: 2,
-    DocNo: 2001,
-    BillType: '',
-    BillDate: '',
-    BillNo: '',
-    BillBookNo: '',
-    BillDocNo: '',
-    Asstotal: 12000,
-    Totalint: 240.00,
-    MonthTotal: 1,
-    MonthInt: 240.00, // 240.00 Baht per month (derived from 12000 * 2%)
-    AppDate: '2026/07/01 09:15:00',
-    ExpDate: '2026/11/01',
-    Model: 'แท็บเล็ต iPad Air 5 256GB WiFi (จำนวน 1 เครื่อง)',
-    BillStat: 'N',
-    Id: '3-1002-34567-89-0'
-  },
-  {
-    SystemID: 2,
-    BudYear: 2569,
-    BookNo: 2,
-    DocNo: 2002,
-    BillType: '', // Unpaid initially
-    BillDate: '',
-    BillNo: '',
-    BillBookNo: '',
-    BillDocNo: '',
-    Asstotal: 8000,
-    Totalint: 160.00,
-    MonthTotal: 1,
-    MonthInt: 160.00, // 160.00 Baht per month (derived from 8000 * 2%)
-    AppDate: '2026/03/15 11:00:00',
-    ExpDate: '2026/07/15',
-    Model: 'นาฬิกาข้อมือ Seiko Prospex (จำนวน 1 เรือน)',
-    BillStat: 'N', // Active pawn/unpaid
-    Id: '1-2345-67890-12-3'
+// Authenticated fetch wrapper — automatically attaches Bearer Token and CSRF header
+async function authFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (typeof state !== 'undefined' && state.authToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${state.authToken}`);
   }
-];
-
-const DEFAULT_PAYMENTS = [
-  {
-    BillNo: 'O260715-0001',
-    SystemID: 2,
-    BudYear: 2569,
-    BookNo: 2,
-    DocNo: 2002,
-    BillType: '2',
-    BillDate: '2026/07/15 11:20:00',
-    Slip: 'Backgroud.png', // Fallback to an existing image in repo
-    Id: '1-2345-67890-12-3'
+  if (!headers.has('X-Requested-With')) {
+    headers.set('X-Requested-With', 'EZY-PawnShop');
   }
-];
+  return fetch(url, { ...options, headers });
+}
 
 const DEFAULT_CONFIG = {
   shop_name: 'โรงรับจำนำ อีซี่ Pawnshop 2006',
@@ -218,21 +138,9 @@ function safeSetLocalStorage(key, data) {
   }
 }
 
-// Load or Initialize database tables in LocalStorage
+// Load or Initialize database tables in LocalStorage (ไม่เก็บข้อมูลความลับหรือรายชื่อลูกค้าทั้งหมดก่อนล็อกอิน)
 function initDB() {
-  if (!localStorage.getItem('pawn_customers')) {
-    safeSetLocalStorage('pawn_customers', DEFAULT_CUSTOMERS);
-  }
-  const storedUsers = localStorage.getItem('pawn_users');
-  if (!storedUsers || !storedUsers.includes('"admin"')) {
-    safeSetLocalStorage('pawn_users', DEFAULT_USERS);
-  }
-  if (!localStorage.getItem('pawn_tickets')) {
-    safeSetLocalStorage('pawn_tickets', DEFAULT_TICKETS);
-  }
-  if (!localStorage.getItem('pawn_payments')) {
-    safeSetLocalStorage('pawn_payments', DEFAULT_PAYMENTS);
-  }
+  localStorage.removeItem('pawn_users');
   const storedConfig = localStorage.getItem('pawn_config');
   if (!storedConfig) {
     safeSetLocalStorage('pawn_config', DEFAULT_CONFIG);
@@ -265,10 +173,10 @@ initDB();
 
 // Global App States
 let db = {
-  customers: normalizeKeys(JSON.parse(localStorage.getItem('pawn_customers'))) || DEFAULT_CUSTOMERS,
-  users: normalizeKeys(JSON.parse(localStorage.getItem('pawn_users'))) || DEFAULT_USERS,
-  tickets: normalizeKeys(JSON.parse(localStorage.getItem('pawn_tickets'))) || DEFAULT_TICKETS,
-  payments: normalizeKeys(JSON.parse(localStorage.getItem('pawn_payments'))) || DEFAULT_PAYMENTS,
+  customers: [],
+  users: [],
+  tickets: [],
+  payments: [],
   config: JSON.parse(localStorage.getItem('pawn_config')) || DEFAULT_CONFIG,
   sync: JSON.parse(localStorage.getItem('pawn_sync_history')) || DEFAULT_SYNC_HISTORY,
   backup: JSON.parse(localStorage.getItem('pawn_backup_history')) || DEFAULT_BACKUP_HISTORY,
@@ -276,66 +184,42 @@ let db = {
   holidays: JSON.parse(localStorage.getItem('pawn_holidays')) || DEFAULT_HOLIDAYS
 };
 
-// ==================== AUTO-FETCH CLOUD DATA ON PAGE LOAD ====================
-// ดึงข้อมูลจริงจาก Cloudflare (ลองจาก /api/sync หรือ /last_cloud_sync.json)
-// มาอัปเดต localStorage ทุกครั้งที่เปิดหน้าเว็บ เพื่อให้ Login และแสดงตั๋วได้ 100% เสมอ
+// ==================== FETCH CLOUD DATA (ADMIN AUTHENTICATED ONLY) ====================
+// ดึงข้อมูลทั้งหมดเฉพาะเมื่อล็อกอินเป็นผู้ดูแลระบบที่มี Token เท่านั้น
+// หากยังไม่ล็อกอิน จะดึงเฉพาะข้อมูลตั้งค่าบัญชีร้าน (/api/config)
 async function refreshCloudData(forceRender = true) {
-  let cloudData = null;
+  if (typeof state === 'undefined' || state.userRole !== 'admin' || !state.authToken) {
+    await loadLiveBankConfig();
+    return false;
+  }
 
-  // 1. ลองดึงจาก /api/sync
+  let cloudData = null;
   try {
-    const res = await fetch('/api/sync?t=' + Date.now());
+    const res = await authFetch('/api/sync?t=' + Date.now());
     const contentType = res.headers.get('content-type') || '';
     if (res.ok && contentType.includes('application/json')) {
       cloudData = await res.json();
     }
   } catch (e) {}
 
-  // 2. ถ้าดึงจาก /api/sync ไม่ได้ ให้ดึงจาก /last_cloud_sync.json บน Cloudflare Pages CDN
-  if (!cloudData || (!cloudData.customers && !cloudData.tickets)) {
-    try {
-      const res2 = await fetch('/last_cloud_sync.json?t=' + Date.now());
-      if (res2.ok) {
-        cloudData = await res2.json();
-      }
-    } catch (e) {}
-  }
-
   if (cloudData) {
     // 1. Tickets
-    if (Array.isArray(cloudData.tickets) && cloudData.tickets.length > 0) {
+    if (Array.isArray(cloudData.tickets)) {
       db.tickets = normalizeKeys(cloudData.tickets);
-      safeSetLocalStorage('pawn_tickets', db.tickets);
     }
     
     // 2. Customers
-    if (Array.isArray(cloudData.customers) && cloudData.customers.length > 0) {
+    if (Array.isArray(cloudData.customers)) {
       const customers = normalizeKeys(cloudData.customers);
       customers.forEach(c => {
         if (c.Name) c.Name = String(c.Name).replace(/\s+/g, ' ').trim();
       });
       db.customers = customers;
-      safeSetLocalStorage('pawn_customers', db.customers);
     }
     
     // 3. Payments
-    if (Array.isArray(cloudData.payments) && cloudData.payments.length > 0) {
-      const normalizedCloudPayments = normalizeKeys(cloudData.payments);
-      const mergedPayments = Array.isArray(db.payments) ? [...db.payments] : [];
-      normalizedCloudPayments.forEach(cp => {
-        const idx = mergedPayments.findIndex(lp => 
-          String(lp.BillNo || lp.bill_no) === String(cp.BillNo || cp.bill_no) && 
-          String(lp.SystemID || lp.system_id) === String(cp.SystemID || cp.system_id) && 
-          String(lp.DocNo || lp.doc_no) === String(cp.DocNo || cp.doc_no)
-        );
-        if (idx > -1) {
-          mergedPayments[idx] = cp;
-        } else {
-          mergedPayments.push(cp);
-        }
-      });
-      db.payments = mergedPayments;
-      safeSetLocalStorage('pawn_payments', db.payments);
+    if (Array.isArray(cloudData.payments)) {
+      db.payments = normalizeKeys(cloudData.payments);
     }
     
     // 4. Config
@@ -352,22 +236,12 @@ async function refreshCloudData(forceRender = true) {
     const pCount = Array.isArray(db.payments) ? db.payments.length : 0;
     console.log(`[Cloud Sync] ซิงค์ข้อมูลล่าสุดสำเร็จ: ${tCount} ตั๋ว, ${cCount} ลูกค้า, ${pCount} การชำระ`);
     
-    if (forceRender) {
-      if (state.userRole === 'customer' && state.currentUser) {
-        const activeTab = document.querySelector('#client-portal .tab-screen.active');
-        if (activeTab) {
-          if (activeTab.id === 'tab-home') renderCustomerHome();
-          else if (activeTab.id === 'tab-tickets') renderCustomerTickets();
-          else if (activeTab.id === 'tab-pay') renderCustomerPayInterest();
-        }
-      } else if (state.userRole === 'admin') {
-        const activeAdmin = document.querySelector('.admin-viewport .admin-screen.active');
-        if (activeAdmin) {
-          if (activeAdmin.id === 'scr-reconcile') renderAdminReconcile();
-          else if (activeAdmin.id === 'scr-dashboard') renderAdminDashboard();
-          else if (activeAdmin.id === 'scr-tickets') renderAdminTickets();
-          else if (activeAdmin.id === 'scr-report') renderAdminReport();
-        }
+    if (forceRender && state.userRole === 'admin') {
+      const activeAdmin = document.querySelector('.admin-viewport .admin-screen.active');
+      if (activeAdmin) {
+        if (activeAdmin.id === 'scr-reconcile') renderAdminReconcile();
+        else if (activeAdmin.id === 'scr-dash' || activeAdmin.id === 'scr-dashboard') renderAdminDashboard();
+        else if (activeAdmin.id === 'scr-report') renderAdminReport();
       }
     }
     return true;
@@ -375,7 +249,7 @@ async function refreshCloudData(forceRender = true) {
   return false;
 }
 
-let _cloudDataReady = refreshCloudData(false);
+let _cloudDataReady = null;
 
 // Global padding utility
 function pad(num) {
@@ -452,6 +326,10 @@ async function loadLiveBankConfig() {
 let state = {
   currentUser: null,
   userRole: null, // 'customer' or 'admin'
+  authToken: '',
+  pendingOtpToken: '',
+  pendingRole: null,
+  pendingUser: null,
   otpCode: '',
   selectedTickets: [], // List of doc numbers for payment
   selectedSlipBase64: '',
@@ -559,20 +437,30 @@ async function handleLogin() {
   
   errorEl.classList.add('hidden');
 
+  if (loginBtn) {
+    loginBtn.disabled = true;
+    loginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังตรวจสอบข้อมูล...';
+  }
+
   // 1. First check if Admin / Staff via Cloudflare D1 /api/users
   const plainId = inputId.replace(/-/g, ''); // UserID normalized
   try {
-    const userRes = await fetch('/api/users', {
+    const userRes = await authFetch('/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'login', user_id: plainId, password: inputContact })
     });
     if (userRes.ok) {
       const userData = await userRes.json();
-      if (userData && userData.success && userData.user) {
-        state.currentUser = userData.user;
-        state.userRole = 'admin';
-        triggerOtpFlow('System Admin SMS');
+      if (userData && userData.success && userData.otp_required && userData.otp_token) {
+        state.pendingOtpToken = userData.otp_token;
+        state.pendingRole = 'admin';
+        state.pendingUser = userData.user || null;
+        if (loginBtn) {
+          loginBtn.disabled = false;
+          loginBtn.innerHTML = originalBtnText;
+        }
+        triggerOtpFlow(userData.otp_preview);
         return;
       }
     }
@@ -580,100 +468,51 @@ async function handleLogin() {
     console.warn('[Admin Login] /api/users cloud check error:', adminErr.message || adminErr);
   }
 
-  // Local fallback for Admin / Staff
-  const localUser = (db.users || []).find(u => {
-    const normalizedDbId = String(u.UserID || '').replace(/-/g, '');
-    return normalizedDbId === plainId && String(u.Password || '') === inputContact;
-  });
-  if (localUser) {
-    state.currentUser = localUser;
-    state.userRole = 'admin';
-    triggerOtpFlow('System Admin SMS');
-    return;
-  }
-
-  // 2. Customer Login
-  if (loginBtn) {
-    loginBtn.disabled = true;
-    loginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังตรวจสอบข้อมูล...';
-  }
-
+  // 2. Customer Login via /api/login (บังคับตรวจทั้งเลขบัตรประชาชนและเบอร์โทรศัพท์บน Server)
   const plainInputId = inputId.replace(/[^0-9a-zA-Z]/g, '');
   const plainInputContact = inputContact.replace(/[^0-9]/g, '');
 
-  // 2.1 Try Online Direct Cloudflare D1 Query (/api/login)
+  if (!plainInputId || !plainInputContact || plainInputContact.length < 9) {
+    if (loginBtn) {
+      loginBtn.disabled = false;
+      loginBtn.innerHTML = originalBtnText;
+    }
+    errorEl.innerText = '* กรุณาระบุเลขบัตรประชาชน และเบอร์โทรศัพท์มือถือให้ถูกต้องครบถ้วน';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
   try {
-    const res = await fetch('/api/login', {
+    const res = await authFetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: plainInputId, contact: plainInputContact })
+      body: JSON.stringify({ action: 'login', id: plainInputId, contact: plainInputContact })
     });
     if (res.ok) {
       const data = await res.json();
-      if (data && data.success && data.customer) {
-        state.currentUser = normalizeKeys(data.customer);
-        state.userRole = 'customer';
-        if (Array.isArray(data.tickets) && data.tickets.length > 0) {
-          const userTickets = normalizeKeys(data.tickets);
-          const otherTickets = (db.tickets || []).filter(t => !isTicketOfCustomer(t, state.currentUser));
-          db.tickets = [...otherTickets, ...userTickets];
-          localStorage.setItem('pawn_tickets', JSON.stringify(db.tickets));
-        }
+      if (data && data.success && data.otp_required && data.otp_token) {
+        state.pendingOtpToken = data.otp_token;
+        state.pendingRole = 'customer';
+        state.pendingUser = null;
         if (loginBtn) {
           loginBtn.disabled = false;
           loginBtn.innerHTML = originalBtnText;
         }
-        triggerOtpFlow(state.currentUser.Tel);
+        triggerOtpFlow(data.otp_preview);
         return;
       }
     }
   } catch (err) {
-    // Cloud API ล้มเหลว (offline / network error) → แจ้งเตือนผู้ใช้ทันที
     if (loginBtn) { loginBtn.disabled = false; loginBtn.innerHTML = originalBtnText; }
-    const isNetErr = err && (err.message || '').toLowerCase().includes('fetch') || err instanceof TypeError;
     errorEl.innerText = '⚠️ เครือข่าย Network ขัดข้อง กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต แล้วลองใหม่อีกครั้ง';
     errorEl.classList.remove('hidden');
     console.warn('[Login] Cloud API error:', err && err.message ? err.message : String(err));
     return;
   }
 
-  // 2.2 Fallback: Ensure Cloud Data is loaded in memory and search
-  if (_cloudDataReady) {
-    try { await _cloudDataReady; } catch(e) {}
-  }
-  if (!db.customers || db.customers.length <= 2) {
-    try {
-      await refreshCloudData(false);
-    } catch(e) {}
-  }
-
-  // Search in db.customers
-  const customer = (db.customers || []).find(c => {
-    const dbId = String(c.Id || '').replace(/[^0-9a-zA-Z]/g, '');
-    const dbCustCode = String(c.CustCode || '').replace(/[^0-9a-zA-Z]/g, '');
-    const dbTel = String(c.Tel || '').replace(/\D/g, '');
-    
-    const idMatches = (dbId === plainInputId || dbCustCode === plainInputId);
-    const telMatches = (
-      !plainInputContact ||
-      !dbTel ||
-      dbTel === plainInputContact ||
-      (dbTel.length >= 9 && plainInputContact.length >= 9 && (dbTel.endsWith(plainInputContact) || plainInputContact.endsWith(dbTel))) ||
-      (dbTel.includes(plainInputContact) && plainInputContact.length >= 8)
-    );
-    return idMatches && telMatches;
-  });
-
   if (loginBtn) {
     loginBtn.disabled = false;
     loginBtn.innerHTML = originalBtnText;
-  }
-
-  if (customer) {
-    state.currentUser = customer;
-    state.userRole = 'customer';
-    triggerOtpFlow(customer.Tel);
-    return;
   }
 
   // 3. Not found, show spec warning message
@@ -681,12 +520,11 @@ async function handleLogin() {
   errorEl.classList.remove('hidden');
 }
 
-function triggerOtpFlow(contactVal) {
-  // Generate random 6 digit OTP
-  state.otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+function triggerOtpFlow(otpPreviewCode) {
+  state.otpCode = String(otpPreviewCode || '');
   
   // Update UI and show modal
-  document.getElementById('mock-otp-code').innerText = state.otpCode;
+  document.getElementById('mock-otp-code').innerText = state.otpCode || 'XXXXXX';
   
   // Clear past inputs
   for (let i = 1; i <= 6; i++) {
@@ -708,6 +546,9 @@ function closeOtpModal() {
   document.getElementById('otp-modal').classList.remove('active');
   state.currentUser = null;
   state.userRole = null;
+  state.pendingOtpToken = '';
+  state.pendingRole = null;
+  state.pendingUser = null;
   state.otpCode = '';
 }
 
@@ -716,34 +557,78 @@ async function verifyOtp() {
   for (let i = 1; i <= 6; i++) {
     enteredOtp += document.getElementById(`otp-${i}`).value.trim();
   }
-  
-  if (enteredOtp === state.otpCode) {
-    // Success
-    document.getElementById('otp-modal').classList.remove('active');
-    document.getElementById('login-view').classList.add('hidden');
-    
-    if (state.userRole === 'customer') {
-      enterCustomerPortal();
-    } else if (state.userRole === 'admin') {
-      await enterAdminPortal();
-    }
-  } else {
-    alert('รหัส OTP ไม่ถูกต้อง กรุณากรอกใหม่อีกครั้ง');
-    // Clear and focus first
-    for (let i = 1; i <= 6; i++) {
-      document.getElementById(`otp-${i}`).value = '';
-    }
-    document.getElementById('otp-1').focus();
+
+  if (enteredOtp.length !== 6 || !state.pendingOtpToken || !state.pendingRole) {
+    alert('กรุณากรอกรหัส OTP 6 หลักให้ครบถ้วน');
+    return;
   }
+
+  const endpoint = state.pendingRole === 'admin' ? '/api/users' : '/api/login';
+  try {
+    const res = await authFetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'verify_otp',
+        otp_token: state.pendingOtpToken,
+        otp: enteredOtp
+      })
+    });
+    const data = await res.json();
+
+    if (res.ok && data && data.success && data.token) {
+      state.authToken = data.token;
+      state.userRole = state.pendingRole;
+      state.pendingOtpToken = '';
+      state.pendingRole = null;
+      state.otpCode = '';
+
+      document.getElementById('otp-modal').classList.remove('active');
+      document.getElementById('login-view').classList.add('hidden');
+
+      if (state.userRole === 'customer') {
+        state.currentUser = normalizeKeys(data.customer);
+        db.tickets = normalizeKeys(data.tickets || []);
+        db.customers = [state.currentUser];
+        enterCustomerPortal();
+      } else if (state.userRole === 'admin') {
+        state.currentUser = normalizeKeys(data.user || state.pendingUser);
+        state.pendingUser = null;
+        await enterAdminPortal();
+      }
+      return;
+    } else {
+      alert((data && data.error) || 'รหัส OTP ไม่ถูกต้อง กรุณากรอกใหม่อีกครั้ง');
+    }
+  } catch (err) {
+    alert('ไม่สามารถตรวจสอบรหัส OTP กับเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง');
+  }
+
+  for (let i = 1; i <= 6; i++) {
+    document.getElementById(`otp-${i}`).value = '';
+  }
+  document.getElementById('otp-1').focus();
 }
 
 function logout() {
   state.currentUser = null;
   state.userRole = null;
+  state.authToken = '';
+  state.pendingOtpToken = '';
+  state.pendingRole = null;
+  state.pendingUser = null;
   state.otpCode = '';
   state.selectedTickets = [];
   state.selectedSlipBase64 = '';
   state.selectedPaymentDateTime = '';
+  db.customers = [];
+  db.tickets = [];
+  db.payments = [];
+  db.users = [];
+  localStorage.removeItem('pawn_customers');
+  localStorage.removeItem('pawn_tickets');
+  localStorage.removeItem('pawn_payments');
+  localStorage.removeItem('pawn_users');
   
   document.body.classList.remove('admin-mode');
   document.getElementById('client-portal').classList.add('hidden');
@@ -756,6 +641,10 @@ function logout() {
 
 // ==================== 3. CUSTOMER PORTAL LOGIC ====================
 function enterCustomerPortal() {
+  if (!state.authToken || state.userRole !== 'customer' || !state.currentUser) {
+    logout();
+    return;
+  }
   document.getElementById('client-portal').classList.remove('hidden');
   
   // Set Profile info
@@ -1015,12 +904,12 @@ function renderCustomerTickets() {
     
     card.innerHTML = `
       <div class="ticket-header flex-row-between">
-        <span class="ticket-id"><i class="fa-solid fa-receipt"></i> เล่มที่ ${t.BookNo} เลขที่ ${t.DocNo}</span>
-        <span class="ticket-badge ${badgeClass}">${statusText}</span>
+        <span class="ticket-id"><i class="fa-solid fa-receipt"></i> เล่มที่ ${escapeHtml(t.BookNo)} เลขที่ ${escapeHtml(t.DocNo)}</span>
+        <span class="ticket-badge ${badgeClass}">${escapeHtml(statusText)}</span>
       </div>
       <div class="ticket-row flex-row-between">
         <span class="ticket-label">รายการทรัพย์สิน:</span>
-        <span class="ticket-val">${t.Model || '-'}</span>
+        <span class="ticket-val">${escapeHtml(t.Model || '-')}</span>
       </div>
       <div class="ticket-row flex-row-between">
         <span class="ticket-label">ยอดเงินรับจำนำ:</span>
@@ -1028,7 +917,7 @@ function renderCustomerTickets() {
       </div>
       <div class="ticket-row flex-row-between">
         <span class="ticket-label">จำนวนเดือน:</span>
-        <span class="ticket-val">${interestCalc.months} เดือน</span>
+        <span class="ticket-val">${escapeHtml(interestCalc.months)} เดือน</span>
       </div>
       <div class="ticket-row flex-row-between">
         <span class="ticket-label">ดอกเบี้ยต่อเดือน:</span>
@@ -1036,11 +925,11 @@ function renderCustomerTickets() {
       </div>
       <div class="ticket-row flex-row-between">
         <span class="ticket-label">วันที่รับจำนำ:</span>
-        <span class="ticket-val">${appDateFormatted}</span>
+        <span class="ticket-val">${escapeHtml(appDateFormatted)}</span>
       </div>
       <div class="ticket-row flex-row-between">
         <span class="ticket-label" style="font-weight: 600; color: var(--primary-red);">วันครบกำหนดตั๋ว:</span>
-        <span class="ticket-val" style="font-weight: 600; color: var(--primary-red);">${expDateFormatted}</span>
+        <span class="ticket-val" style="font-weight: 600; color: var(--primary-red);">${escapeHtml(expDateFormatted)}</span>
       </div>
     `;
     
@@ -1092,21 +981,21 @@ function renderCustomerPayInterest() {
     
     card.innerHTML = `
       <div style="font-weight: 700; font-size: 15px; margin-bottom: 6px;">
-        เล่มที่ ${t.BookNo} เลขที่ ${t.DocNo}
+        เล่มที่ ${escapeHtml(t.BookNo)} เลขที่ ${escapeHtml(t.DocNo)}
       </div>
       <div style="font-size: 13px; color: var(--text-medium); margin-bottom: 4px;">
-        รายการ: ${t.Model || '-'}
+        รายการ: ${escapeHtml(t.Model || '-')}
       </div>
       <div class="flex-row-between" style="font-size: 13px; margin-bottom: 4px;">
         <span>เงินรับจำนำ:</span>
         <span class="number" style="font-weight: 600;">${asstotalNum.toLocaleString('th-TH')} บาท</span>
       </div>
       <div class="flex-row-between" style="font-size: 13px; margin-bottom: 4px; color: var(--primary-red);">
-        <span>ดอกเบี้ยค้างชำระ (${calc.months} เดือน):</span>
+        <span>ดอกเบี้ยค้างชำระ (${escapeHtml(calc.months)} เดือน):</span>
         <span class="number" style="font-weight: 700;">${calc.interestAmount.toLocaleString('th-TH', {minimumFractionDigits:2, maximumFractionDigits:2})} บาท</span>
       </div>
       <div style="font-size: 12px; color: var(--text-light); text-align: right; margin-top: 6px;">
-        หมดอายุ: ${expDateFormatted}
+        หมดอายุ: ${escapeHtml(expDateFormatted)}
       </div>
     `;
     
@@ -1418,7 +1307,7 @@ async function _doSubmitPayment() {
 
   let billNo = '';
   try {
-    const seqRes = await fetch('/api/billseq', {
+    const seqRes = await authFetch('/api/billseq', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prefix })
@@ -1503,7 +1392,7 @@ async function _doSubmitPayment() {
   let cloudErrorCode = '';
   let cloudErrorMsg = '';
   try {
-    const res = await fetch('/api/payment', {
+    const res = await authFetch('/api/payment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ payment: newPayments[0], payments: newPayments, ticket: submittedTickets[0], tickets: submittedTickets })
@@ -1524,12 +1413,6 @@ async function _doSubmitPayment() {
       if (resData.r2_warning) {
         console.warn('[Payment] R2 warning:', resData.r2_warning);
       }
-      // Also push to /api/sync in background (non-blocking)
-      fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payments: newPayments.map(p => ({...p, Slip: returnedSlipUrl || ''})), tickets: submittedTickets })
-      }).catch((err) => {console.error('[Sync payment] Error:', err);});
     } else {
       cloudErrorCode = `HTTP ${res.status} ${res.statusText}`;
       try {
@@ -1628,44 +1511,27 @@ function toggleAdminSidebar() {
 
 async function loadOptionIni() {
   try {
-    const res = await fetch('/option.ini?t=' + Date.now());
+    const res = await authFetch('/api/ping?t=' + Date.now());
     if (res.ok) {
-      const text = await res.text();
-      const match = text.match(/SysGov\s*=\s*(\d)/i);
-      if (match) {
-        state.sysGov = parseInt(match[1], 10);
-      } else {
-        state.sysGov = 0;
-      }
+      const data = await res.json();
+      state.sysGov = data && typeof data.sys_gov === 'number' ? data.sys_gov : 0;
     } else {
       state.sysGov = 0;
     }
   } catch (e) {
-    console.error('Failed to load option.ini', e);
     state.sysGov = 0;
   }
 }
 
 async function loadUsersFromCloud() {
+  if (!state.authToken || state.userRole !== 'admin') return;
   try {
-    const res = await fetch('/api/users?t=' + Date.now());
+    const res = await authFetch('/api/users?t=' + Date.now());
     if (res.ok) {
       const data = await res.json();
-      if (data && data.success && Array.isArray(data.users) && data.users.length > 0) {
-        // ใช้ D1 เป็น source หลัก — overwrite local ทั้งหมด เพื่อให้ข้อมูลชุดเดียวกัน
+      if (data && data.success && Array.isArray(data.users)) {
         db.users = normalizeKeys(data.users);
-        safeSetLocalStorage('pawn_users', db.users);
         console.log('[Users] Loaded users from Cloudflare D1 (source of truth):', db.users.length);
-      } else if (data && data.success && Array.isArray(data.users) && data.users.length === 0) {
-        // D1 ว่างเปล่า: sync ข้อมูล local ขึ้น D1 เพื่อให้สอดคล้องกัน
-        if (db.users && db.users.length > 0) {
-          console.log('[Users] D1 users empty — pushing local users to D1...');
-          await fetch('/api/users', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'upsert', users: db.users })
-          });
-        }
       }
     }
   } catch (e) {
@@ -1675,6 +1541,10 @@ async function loadUsersFromCloud() {
 
 
 async function enterAdminPortal() {
+  if (!state.authToken || state.userRole !== 'admin' || !state.currentUser) {
+    logout();
+    return;
+  }
   await loadOptionIni();
   try { await loadUsersFromCloud(); } catch(e) {}
   
@@ -1778,26 +1648,24 @@ function switchAdminScreen(screenName, navItem) {
 }
 
 async function renderAdminDashboard() {
+  if (!state.authToken || state.userRole !== 'admin') return;
   // 1. Fetch live data directly from Cloudflare (D1 & Config)
   try {
     const [syncRes, cfgRes] = await Promise.all([
-      fetch('/api/sync?t=' + Date.now()).catch(() => null),
-      fetch('/api/config?t=' + Date.now()).catch(() => null)
+      authFetch('/api/sync?t=' + Date.now()).catch(() => null),
+      authFetch('/api/config?t=' + Date.now()).catch(() => null)
     ]);
     if (syncRes && syncRes.ok) {
       const syncData = await syncRes.json();
       if (syncData) {
         if (Array.isArray(syncData.tickets) && syncData.tickets.length > 0) {
           db.tickets = normalizeKeys(syncData.tickets);
-          safeSetLocalStorage('pawn_tickets', db.tickets);
         }
         if (Array.isArray(syncData.customers) && syncData.customers.length > 0) {
           db.customers = normalizeKeys(syncData.customers);
-          safeSetLocalStorage('pawn_customers', db.customers);
         }
         if (Array.isArray(syncData.payments)) {
           db.payments = normalizeKeys(syncData.payments);
-          safeSetLocalStorage('pawn_payments', db.payments);
         }
       }
     }
@@ -2133,8 +2001,9 @@ function renderAdminReconcile() {
     }
     
     // Display thumbnail of slip
-    const slipHtml = p.Slip ? 
-      `<img src="${p.Slip}" style="height: 32px; max-width: 60px; object-fit: contain; cursor: pointer; border: 1px solid var(--border-light); border-radius: 4px;" onclick="showImageViewer('${p.Slip}')" title="กดซูมดูรูป">` 
+    const safeSlip = escapeHtml(p.Slip || '');
+    const slipHtml = safeSlip ? 
+      `<img src="${safeSlip}" style="height: 32px; max-width: 60px; object-fit: contain; cursor: pointer; border: 1px solid var(--border-light); border-radius: 4px;" onclick="showImageViewer('${safeSlip}')" title="กดซูมดูรูป">` 
       : 'ไม่มีรูป';
       
     const formattedDate = formatThaiDate(p.BillDate.split(' ')[0]) + ' ' + p.BillDate.split(' ')[1].substring(0, 5) + ' น.';
@@ -2145,7 +2014,7 @@ function renderAdminReconcile() {
     // Select checkbox enabled only for "pending" status
     const checkboxHtml = p.BillType === '9' ? `
       <label class="checkbox-container">
-        <input type="checkbox" name="reconcile-checkbox" value="${p.SystemID}_${p.BudYear}_${p.BookNo}_${p.DocNo}">
+        <input type="checkbox" name="reconcile-checkbox" value="${escapeHtml(p.SystemID)}_${escapeHtml(p.BudYear)}_${escapeHtml(p.BookNo)}_${escapeHtml(p.DocNo)}">
         <span class="checkmark"></span>
       </label>
     ` : '<i class="fa-solid fa-circle-check" style="color: var(--success-green);"></i>';
@@ -2167,20 +2036,20 @@ function renderAdminReconcile() {
 
     tr.innerHTML = `
       <td style="text-align: center;">${checkboxHtml}</td>
-      <td class="number" style="font-weight: 600;">${p.BillNo}</td>
+      <td class="number" style="font-weight: 600;">${escapeHtml(p.BillNo)}</td>
       <td>
-        <span style="font-weight: 600;">${customerName}</span><br>
-        <span class="number" style="font-size: 12px; color: var(--text-medium);">${p.Id}</span><br>
-        <span class="number" style="font-size: 12px; color: var(--text-medium);"><i class="fa-solid fa-phone" style="font-size: 10px; margin-right: 4px;"></i>${customerTel}</span>
+        <span style="font-weight: 600;">${escapeHtml(customerName)}</span><br>
+        <span class="number" style="font-size: 12px; color: var(--text-medium);">${escapeHtml(p.Id)}</span><br>
+        <span class="number" style="font-size: 12px; color: var(--text-medium);"><i class="fa-solid fa-phone" style="font-size: 10px; margin-right: 4px;"></i>${escapeHtml(customerTel)}</span>
       </td>
-      <td class="number">${formattedDate}</td>
-      <td style="font-size: 13px; max-width: 200px;">${ticketDetails}</td>
+      <td class="number">${escapeHtml(formattedDate)}</td>
+      <td style="font-size: 13px; max-width: 200px;">${escapeHtml(ticketDetails)}</td>
       <td style="text-align: center;">${slipHtml}</td>
       <td class="number" style="font-weight: 700; color: var(--primary-red); text-align: right;">${interestAmtVal.toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
       <td class="number" style="font-weight: 700; color: var(--accent-gold); text-align: right;">${billTotalInterest.toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
       <td>${statusBadge}</td>
       <td style="text-align: center;">
-        <button class="btn btn-secondary" style="width: auto; padding: 6px 10px; font-size: 12px; border-radius: 6px;" onclick="showReconcileDetailModal('${p.SystemID}', '${p.BudYear}', '${p.BookNo}', '${p.DocNo}')">
+        <button class="btn btn-secondary" style="width: auto; padding: 6px 10px; font-size: 12px; border-radius: 6px;" onclick="showReconcileDetailModal('${escapeHtml(p.SystemID)}', '${escapeHtml(p.BudYear)}', '${escapeHtml(p.BookNo)}', '${escapeHtml(p.DocNo)}')">
           <i class="fa-solid fa-eye"></i>
         </button>
       </td>
@@ -2278,23 +2147,23 @@ function showReconcileDetailModal(systemId, budYear, bookNo, docNo) {
     <div style="background-color: var(--bg-light); padding: 16px; border-radius: var(--radius-md); border-left: 5px solid var(--primary-red); margin-bottom: 16px;">
       <h4 style="font-size: 14px; margin-bottom: 12px; color: var(--primary-red); font-weight: 700;">ข้อมูลการชำระเงิน</h4>
       <div style="display: grid; grid-template-columns: 1fr; gap: 8px; font-size: 13px;">
-        <div><strong>รหัสชำระ (BillNo):</strong> <span class="number">${pay.BillNo}</span></div>
-        <div><strong>ลูกค้า:</strong> ${custName}</div>
-        <div><strong>เลขบัตรประชาชน:</strong> ${pay.Id}</div>
-        <div><strong>วันที่ชำระเงิน:</strong> ${formattedDate} น.</div>
+        <div><strong>รหัสชำระ (BillNo):</strong> <span class="number">${escapeHtml(pay.BillNo)}</span></div>
+        <div><strong>ลูกค้า:</strong> ${escapeHtml(custName)}</div>
+        <div><strong>เลขบัตรประชาชน:</strong> ${escapeHtml(pay.Id)}</div>
+        <div><strong>วันที่ชำระเงิน:</strong> ${escapeHtml(formattedDate)} น.</div>
       </div>
     </div>
 
     <div style="background-color: var(--bg-light); padding: 16px; border-radius: var(--radius-md); border-left: 5px solid var(--accent-gold); font-size: 13px;">
       <h4 style="font-size: 14px; margin-bottom: 12px; color: var(--accent-gold); font-weight: 700;">ข้อมูลตั๋วรับจำนำ</h4>
       <div style="display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px;">
-        <div><strong>เล่มที่/เลขที่ตั๋ว:</strong> เล่ม ${pay.BookNo} เลขที่ ${pay.DocNo}</div>
-        <div><strong>รายการทรัพย์สิน:</strong> ${itemModel}</div>
+        <div><strong>เล่มที่/เลขที่ตั๋ว:</strong> เล่ม ${escapeHtml(pay.BookNo)} เลขที่ ${escapeHtml(pay.DocNo)}</div>
+        <div><strong>รายการทรัพย์สิน:</strong> ${escapeHtml(itemModel)}</div>
         <div><strong>วงเงินจำนำ:</strong> ${asstotal.toLocaleString('th-TH')} บาท</div>
         <div><strong>ดอกเบี้ย:</strong> ${monthlyInterestVal.toLocaleString('th-TH', {minimumFractionDigits: 2})} บาท</div>
-        <div><strong>จำนวนเดือน:</strong> ${months} เดือน</div>
-        <div><strong>วันที่จำนำ:</strong> ${appDateStr}</div>
-        <div><strong>วันครบกำหนดตั๋ว:</strong> ${expDateStr}</div>
+        <div><strong>จำนวนเดือน:</strong> ${escapeHtml(months)} เดือน</div>
+        <div><strong>วันที่จำนำ:</strong> ${escapeHtml(appDateStr)}</div>
+        <div><strong>วันครบกำหนดตั๋ว:</strong> ${escapeHtml(expDateStr)}</div>
       </div>
       </div>
       <div style="border-top: 1px dashed var(--border-light); padding-top: 10px; color: var(--primary-red); font-size: 15px; font-weight: 700; display: flex; justify-content: space-between;">
@@ -2392,12 +2261,12 @@ async function approveSinglePayment(systemId, budYear, bookNo, docNo) {
       sync_time: new Date().toISOString()
     };
     await Promise.all([
-      fetch('/api/sync', {
+      authFetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       }),
-      fetch('/api/payment', {
+      authFetch('/api/payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -2474,12 +2343,12 @@ async function batchApprovePayments() {
         sync_time: new Date().toISOString()
       };
       await Promise.all([
-        fetch('/api/sync', {
+        authFetch('/api/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         }),
-        fetch('/api/payment', {
+        authFetch('/api/payment', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -2711,11 +2580,11 @@ function renderAdminReport() {
     
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td class="number">${p.BillNo}</td>
-      <td>${custName}</td>
-      <td class="number">${appDateFormatted}</td>
-      <td class="number">เล่ม ${p.BookNo} เลขที่ ${p.DocNo}</td>
-      <td>${model}</td>
+      <td class="number">${escapeHtml(p.BillNo)}</td>
+      <td>${escapeHtml(custName)}</td>
+      <td class="number">${escapeHtml(appDateFormatted)}</td>
+      <td class="number">เล่ม ${escapeHtml(p.BookNo)} เลขที่ ${escapeHtml(p.DocNo)}</td>
+      <td>${escapeHtml(model)}</td>
       <td class="number" style="text-align: right;">${asstotal.toLocaleString('th-TH')}</td>
       <td class="number" style="text-align: right; font-weight: 700; color: var(--primary-red);">${interest.toLocaleString('th-TH', {minimumFractionDigits:2})}</td>
       <td style="text-align: left;">
@@ -2768,20 +2637,21 @@ async function renderAdminUsers() {
   
   db.users.forEach(u => {
     const tr = document.createElement('tr');
+    const safeUserId = escapeHtml(u.UserID);
     
     // Disable delete on current user to prevent self-deletion
     const isSelf = u.UserID === state.currentUser.UserID;
     const deleteBtnHtml = isSelf ? 
       `<button type="button" class="btn btn-secondary" style="width: auto; padding: 6px 10px; font-size: 12px; border-radius: 6px; opacity: 0.5; cursor: not-allowed;" disabled title="ไม่สามารถลบตัวเองได้"><i class="fa-solid fa-trash-can"></i></button>` : 
-      `<button type="button" class="btn btn-outline" style="width: auto; padding: 6px 10px; font-size: 12px; border-radius: 6px; color: var(--primary-red); border-color: var(--primary-red); margin-left: 6px;" onclick="deleteUser('${u.UserID}')"><i class="fa-solid fa-trash-can"></i></button>`;
+      `<button type="button" class="btn btn-outline" style="width: auto; padding: 6px 10px; font-size: 12px; border-radius: 6px; color: var(--primary-red); border-color: var(--primary-red); margin-left: 6px;" onclick="deleteUser('${safeUserId}')"><i class="fa-solid fa-trash-can"></i></button>`;
       
     tr.innerHTML = `
-      <td style="font-weight: 600;" class="number">${u.UserID}</td>
-      <td>${u.Name}</td>
-      <td>${u.Position}</td>
+      <td style="font-weight: 600;" class="number">${safeUserId}</td>
+      <td>${escapeHtml(u.Name)}</td>
+      <td>${escapeHtml(u.Position)}</td>
       <td><span class="ticket-badge badge-paid" style="background-color: var(--primary-red-light); color: var(--primary-red);">Active</span></td>
       <td style="text-align: center; display: flex; gap: 4px; justify-content: center;">
-        <button type="button" class="btn btn-secondary" style="width: auto; padding: 6px 10px; font-size: 12px; border-radius: 6px;" onclick="openEditUserModal('${u.UserID}')">
+        <button type="button" class="btn btn-secondary" style="width: auto; padding: 6px 10px; font-size: 12px; border-radius: 6px;" onclick="openEditUserModal('${safeUserId}')">
           <i class="fa-solid fa-pen-to-square"></i>
         </button>
         ${deleteBtnHtml}
@@ -2812,7 +2682,10 @@ function openAddUserModal() {
   document.getElementById('user-crud-id').value = '';
   document.getElementById('user-crud-id').disabled = false;
   document.getElementById('user-crud-name').value = '';
-  document.getElementById('user-crud-pass').value = '';
+  const passInput = document.getElementById('user-crud-pass');
+  passInput.value = '';
+  passInput.required = true;
+  passInput.placeholder = 'กรอกรหัสผ่านสำหรับเข้าใช้งาน';
   
   populatePositionsDropdown(db.positions[0] || 'ผู้จัดการ');
   
@@ -2830,7 +2703,10 @@ function openEditUserModal(userId) {
   document.getElementById('user-crud-id').value = user.UserID;
   document.getElementById('user-crud-id').disabled = true; // ID cannot be edited
   document.getElementById('user-crud-name').value = user.Name;
-  document.getElementById('user-crud-pass').value = user.Password;
+  const passInput = document.getElementById('user-crud-pass');
+  passInput.value = '';
+  passInput.required = false;
+  passInput.placeholder = 'เว้นว่างไว้หากไม่ต้องการเปลี่ยนรหัสผ่าน';
   
   populatePositionsDropdown(user.Position);
   
@@ -2849,40 +2725,42 @@ function saveUserCrud() {
   const pos = document.getElementById('user-crud-pos').value;
   
   if (mode === 'add') {
-    // Check duplication
+    if (!pass) {
+      alert('กรุณากำหนดรหัสผ่านสำหรับผู้ใช้งานใหม่');
+      return;
+    }
     const exist = db.users.some(u => u.UserID.toLowerCase() === userId.toLowerCase());
     if (exist) {
       alert('ขออภัย: รหัสพนักงาน (UserID) นี้มีอยู่ในระบบแล้ว!');
       return;
     }
     
-    db.users.push({ UserID: userId, Password: pass, Name: name, Position: pos });
+    db.users.push({ UserID: userId, Name: name, Position: pos });
   } else {
-    // Edit mode
     const oldId = document.getElementById('user-crud-old-id').value;
     const user = db.users.find(u => u.UserID === oldId);
     if (user) {
       user.Name = name;
-      user.Password = pass;
       user.Position = pos;
     }
   }
-  
-  // บันทึก localStorage
-  saveDBTable('users');
 
-  // Sync ขึ้น Cloudflare D1 (/api/users)
-  const userToSave = db.users.find(u => u.UserID === userId) || { UserID: userId, Password: pass, Name: name, Position: pos };
-  fetch('/api/users', {
+  // Sync ขึ้น Cloudflare D1 (/api/users) ซึ่งจะทำการ Hash รหัสผ่านด้วย PBKDF2
+  const userToSave = { UserID: userId, Password: pass, Name: name, Position: pos };
+  authFetch('/api/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'upsert', user: userToSave })
   }).then(r => r.json()).then(d => {
-    if (d.success) console.log('[Users] Synced to Cloudflare D1:', userId);
-    else console.warn('[Users] Cloud sync warning:', d.error);
+    if (d.success) {
+      console.log('[Users] Synced to Cloudflare D1:', userId);
+      renderAdminUsers();
+    } else {
+      console.warn('[Users] Cloud sync warning:', d.error);
+      alert('เกิดข้อผิดพลาดในการบันทึกผู้ใช้: ' + (d.error || 'Unknown error'));
+    }
   }).catch(e => console.warn('[Users] Cloud sync error:', e.message));
 
-  renderAdminUsers();
   closeUserCrudModal();
   alert('บันทึกข้อมูลผู้ใช้งานระบบเสร็จสิ้น!');
 }
@@ -2892,19 +2770,18 @@ function deleteUser(userId) {
     const idx = db.users.findIndex(u => u.UserID === userId);
     if (idx !== -1) {
       db.users.splice(idx, 1);
-      saveDBTable('users');
 
       // Sync การลบขึ้น Cloudflare D1
-      fetch('/api/users', {
+      authFetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', user_id: userId })
       }).then(r => r.json()).then(d => {
         if (d.success) console.log('[Users] Deleted from Cloudflare D1:', userId);
         else console.warn('[Users] Cloud delete warning:', d.error);
+        renderAdminUsers();
       }).catch(e => console.warn('[Users] Cloud delete error:', e.message));
 
-      renderAdminUsers();
       alert('ลบผู้ใช้งานเรียบร้อยแล้ว!');
     }
   }
@@ -2972,16 +2849,31 @@ function applyBankSettingsToUI() {
   // 5. Bank Logo (Image or Text)
   const logoEl = document.getElementById('cfg-bank-logo');
   const logoVal = String(cfg.bank_logo || 'KB').trim();
-  const isImagePath = /\.(jpg|jpeg|png|gif|ico|webp)$/i.test(logoVal) || logoVal.includes('\\') || logoVal.includes('/') || logoVal.startsWith('data:') || logoVal.startsWith('http');
+  const isImagePath = /\.(jpg|jpeg|png|gif|ico|webp)$/i.test(logoVal) || logoVal.includes('\\') || logoVal.includes('/') || logoVal.startsWith('data:image/') || /^https?:\/\//i.test(logoVal);
   
   if (logoEl) {
+    logoEl.innerHTML = '';
     if (isImagePath) {
       let srcVal = logoVal;
       if (srcVal.includes('\\') || srcVal.includes('/')) {
-        const parts = srcVal.split(/[\\/]/);
-        srcVal = parts[parts.length - 1];
+        if (!/^https?:\/\//i.test(srcVal) && !srcVal.startsWith('data:image/')) {
+          const parts = srcVal.split(/[\\/]/);
+          srcVal = parts[parts.length - 1];
+        }
       }
-      logoEl.innerHTML = `<img src="${srcVal}" alt="Bank Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%; display: block;" onerror="this.onerror=null; this.parentNode.innerText='${logoVal.substring(0,4)}'; this.parentNode.style.backgroundColor='${customColor}'; this.parentNode.style.color='#ffffff';">`;
+      const img = document.createElement('img');
+      img.src = srcVal;
+      img.alt = 'Bank Logo';
+      img.style.cssText = 'width: 100%; height: 100%; object-fit: contain; border-radius: 50%; display: block;';
+      img.onerror = function() {
+        this.onerror = null;
+        if (this.parentNode) {
+          this.parentNode.innerText = logoVal.substring(0, 4);
+          this.parentNode.style.backgroundColor = customColor;
+          this.parentNode.style.color = '#ffffff';
+        }
+      };
+      logoEl.appendChild(img);
       logoEl.style.setProperty('padding', '0', 'important');
       logoEl.style.setProperty('background', 'transparent', 'important');
       logoEl.style.setProperty('border', '1px solid ' + customColor, 'important');
@@ -3047,7 +2939,7 @@ async function saveBankSettings() {
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s Timeout
     
     // ลองส่งไปยัง /api/config
-    const res = await fetch('/api/config', {
+    const res = await authFetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ config: db.config }),
@@ -3070,7 +2962,7 @@ async function saveBankSettings() {
       // หาก /api/config ไม่ตอบสนอง ลองส่งผ่าน /api/sync สำรอง
       const controllerSync = new AbortController();
       const timeoutSyncId = setTimeout(() => controllerSync.abort(), 10000);
-      const resSync = await fetch('/api/sync', {
+      const resSync = await authFetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ config: db.config }),
@@ -3126,13 +3018,14 @@ function renderAdminPositions() {
   
   db.positions.forEach(p => {
     const tr = document.createElement('tr');
+    const safeP = escapeHtml(p);
     tr.innerHTML = `
-      <td style="font-weight: 600;">${p}</td>
+      <td style="font-weight: 600;">${safeP}</td>
       <td style="text-align: center; display: flex; gap: 4px; justify-content: center; align-items: center;">
-        <button type="button" class="btn btn-secondary" style="width: auto; padding: 6px 10px; font-size: 11px; border-radius: 4px;" onclick="openEditPositionModal('${p}')">
+        <button type="button" class="btn btn-secondary" style="width: auto; padding: 6px 10px; font-size: 11px; border-radius: 4px;" onclick="openEditPositionModal('${safeP}')">
           <i class="fa-solid fa-pen-to-square"></i>
         </button>
-        <button type="button" class="btn btn-outline" style="width: auto; padding: 6px 10px; font-size: 11px; border-radius: 4px; color: var(--primary-red); border-color: var(--primary-red); margin-left: 6px;" onclick="deletePosition('${p}')">
+        <button type="button" class="btn btn-outline" style="width: auto; padding: 6px 10px; font-size: 11px; border-radius: 4px; color: var(--primary-red); border-color: var(--primary-red); margin-left: 6px;" onclick="deletePosition('${safeP}')">
           <i class="fa-solid fa-trash-can"></i>
         </button>
       </td>
@@ -3358,7 +3251,7 @@ async function runCloudSync() {
 
   // Helper: POST chunk ไปยัง /api/sync (Cloudflare D1 via Pages Function)
   const postChunk = async (payload) => {
-    const res = await fetch('/api/sync', {
+    const res = await authFetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -3383,29 +3276,13 @@ async function runCloudSync() {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 4000);
-        const res = await fetch(`${host}/api/ping?t=` + Date.now(), { method: 'GET', signal: controller.signal });
+        const res = await authFetch(`${host}/api/ping?t=` + Date.now(), { method: 'GET', signal: controller.signal });
         clearTimeout(timeoutId);
         if (res.ok) {
           localUrl = host;
           break;
         }
       } catch (e) {}
-    }
-
-    if (!localUrl) {
-      // ลองทดสอบ GET option.ini
-      for (const host of candidateHosts) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 4000);
-          const res = await fetch(`${host}/option.ini?t=` + Date.now(), { method: 'GET', signal: controller.signal });
-          clearTimeout(timeoutId);
-          if (res.ok) {
-            localUrl = host;
-            break;
-          }
-        } catch (e) {}
-      }
     }
 
     // หากไม่พบ Local Server ให้แจ้งเตือนพร้อมแนะนำเปิด Start_Server.bat หรือรัน Sync_MySQL_To_Cloud.bat
@@ -3430,8 +3307,9 @@ async function runCloudSync() {
     
     let syncResData = null;
     try {
-      const syncRes = await fetch(`${localUrl}/api/sync`, {
+      const syncRes = await authFetch(`${localUrl}/api/sync`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'sync_mysql', sync_time: new Date().toISOString() })
       });
       if (syncRes.ok) {
@@ -3455,10 +3333,10 @@ async function runCloudSync() {
     db.customers = [];
     db.tickets = [];
 
-    // 4. ดึงข้อมูลล่าสุดจาก Cloudflare D1 กลับมาลง LocalStorage
+    // 4. ดึงข้อมูลล่าสุดจาก Cloudflare D1 กลับมาในหน่วยความจำ
     let d1Data = null;
     try {
-      const d1Res = await fetch('/api/sync?t=' + Date.now());
+      const d1Res = await authFetch('/api/sync?t=' + Date.now());
       if (d1Res.ok) {
         d1Data = await d1Res.json();
       }
@@ -3469,7 +3347,7 @@ async function runCloudSync() {
     // Fallback: หากดึง /api/sync ไม่ได้ ให้ดึงจาก Local Server last_cloud_sync.json
     if (!d1Data || (!d1Data.tickets && !d1Data.customers)) {
       try {
-        const fRes = await fetch(`${localUrl}/api/sync?t=` + Date.now());
+        const fRes = await authFetch(`${localUrl}/api/sync?t=` + Date.now());
         if (fRes.ok) {
           d1Data = await fRes.json();
         }
@@ -3482,8 +3360,6 @@ async function runCloudSync() {
       db.customers.forEach(c => {
         if (c.Name) c.Name = String(c.Name).replace(/\s+/g, ' ').trim();
       });
-      safeSetLocalStorage('pawn_customers', db.customers);
-      safeSetLocalStorage('pawn_tickets', db.tickets);
     }
 
     const ticketCount = (syncResData && syncResData.tickets) || db.tickets.length;
@@ -3549,11 +3425,11 @@ function renderSyncHistory() {
     div.innerHTML = `
       <div>
         <strong style="color: var(--text-dark); font-size: 14px;">ซิงค์ไฟล์ฐานข้อมูล</strong><br>
-        <span class="number" style="font-size: 12px; color: var(--text-medium);">${formattedTS}</span>
+        <span class="number" style="font-size: 12px; color: var(--text-medium);">${escapeHtml(formattedTS)}</span>
       </div>
       <div>
-        <span class="number" style="font-size: 13px; margin-right: 12px; font-weight: 500;">${h.count}</span>
-        <span class="ticket-badge badge-paid" style="background-color: var(--success-green);">${h.status}</span>
+        <span class="number" style="font-size: 13px; margin-right: 12px; font-weight: 500;">${escapeHtml(h.count)}</span>
+        <span class="ticket-badge badge-paid" style="background-color: var(--success-green);">${escapeHtml(h.status)}</span>
       </div>
     `;
     container.appendChild(div);
@@ -3583,7 +3459,7 @@ async function runCloudBackup() {
   
   try {
     // ส่งไฟล์ zip/rar จริงไปยัง R2 API endpoint (/api/backup/:filename)
-    const response = await fetch('/api/backup/' + encodeURIComponent(fileName), {
+    const response = await authFetch('/api/backup/' + encodeURIComponent(fileName), {
       method: 'PUT',
       headers: {
         'Content-Type': contentType,
@@ -3636,6 +3512,32 @@ function runCloudBackupSimulation() {
   runCloudBackup();
 }
 
+async function downloadBackupFile(filename) {
+  try {
+    const res = await authFetch('/api/backup/' + encodeURIComponent(filename));
+    if (!res.ok) {
+      let errMsg = `HTTP ${res.status}`;
+      try {
+        const errData = await res.json();
+        if (errData && errData.error) errMsg = errData.error;
+      } catch (e) {}
+      alert('ไม่สามารถดาวน์โหลดไฟล์สำรองได้: ' + errMsg);
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (e) {
+    alert('เกิดข้อผิดพลาดในการดาวน์โหลดไฟล์สำรอง: ' + e.message);
+  }
+}
+
 async function renderBackupHistory() {
   const container = document.getElementById('backup-history-log');
   if (!container) return;
@@ -3644,7 +3546,7 @@ async function renderBackupHistory() {
   
   let r2Files = [];
   try {
-    const res = await fetch('/api/backups?t=' + Date.now());
+    const res = await authFetch('/api/backups?t=' + Date.now());
     if (res.ok) {
       const data = await res.json();
       if (data && data.files) {
@@ -3675,17 +3577,19 @@ async function renderBackupHistory() {
     const rawTime = h.uploaded || h.timestamp || '';
     const timePart = rawTime.includes(' ') ? ' ' + rawTime.split(' ')[1].substring(0, 5) : '';
     const formattedTS = rawTime ? (formatThaiDate(rawTime.split(' ')[0]) + timePart) : '-';
+    const safeFilename = escapeHtml(h.filename);
+    const safeStatus = escapeHtml(h.status || 'จัดเก็บเรียบร้อย (Cloudflare R2)');
     
     div.innerHTML = `
       <div>
-        <strong style="color: var(--text-dark); font-size: 14px;"><i class="fa-solid fa-file-zipper" style="color: var(--primary-red); margin-right: 6px;"></i>${h.filename}</strong><br>
-        <span class="number" style="font-size: 12px; color: var(--text-medium);">เวลาอัปโหลด: ${formattedTS}</span>
+        <strong style="color: var(--text-dark); font-size: 14px;"><i class="fa-solid fa-file-zipper" style="color: var(--primary-red); margin-right: 6px;"></i>${safeFilename}</strong><br>
+        <span class="number" style="font-size: 12px; color: var(--text-medium);">เวลาอัปโหลด: ${escapeHtml(formattedTS)}</span>
       </div>
       <div style="display: flex; align-items: center; gap: 8px;">
-        <span class="ticket-badge badge-paid" style="background-color: var(--primary-red-light); color: var(--primary-red); font-weight: 600;">${h.status || 'จัดเก็บเรียบร้อย (Cloudflare R2)'}</span>
-        <a href="/api/backup/${h.filename}" download="${h.filename}" class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px; border-radius: 6px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">
+        <span class="ticket-badge badge-paid" style="background-color: var(--primary-red-light); color: var(--primary-red); font-weight: 600;">${safeStatus}</span>
+        <button type="button" onclick="downloadBackupFile('${safeFilename}')" class="btn btn-secondary" style="width: auto; padding: 4px 10px; font-size: 12px; border-radius: 6px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">
           <i class="fa-solid fa-download"></i> ดาวน์โหลด
-        </a>
+        </button>
       </div>
     `;
     container.appendChild(div);
@@ -3820,7 +3724,7 @@ window.onload = function() {
   startAdminClock();
   updateSystemVersionDisplay();
   applyBankSettingsToUI();
-  refreshCloudData(true);
+  loadLiveBankConfig();
   
   // Register keyboard shortcut listeners
   window.addEventListener('keydown', (e) => {

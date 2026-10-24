@@ -1,19 +1,128 @@
 /**
  * Cloudflare Pages Function: /api/sync
- * Syncs database records between client, Python worker and Cloudflare D1
+ * Syncs database records between authenticated Admin / Python worker and Cloudflare D1
  *
  * D1 = Database หลัก
- * KV = ไม่ใช้ใน endpoint นี้
+ * ต้องยืนยันตัวตนด้วย Admin Bearer Token หรือ X-Sync-Secret เท่านั้น
  */
+
+const ALLOWED_ORIGINS = [
+  'https://ezy-pawnshop2006.rainbow-ocean.site',
+  'https://ezy-pawnshop-web.pages.dev',
+  'http://localhost:8000',
+  'http://127.0.0.1:8000'
+];
+
+function getCorsHeaders(request) {
+  const origin = request.headers.get('Origin') || '';
+  const allowOrigin = ALLOWED_ORIGINS.includes(origin) || origin.endsWith('.ezy-pawnshop-web.pages.dev')
+    ? origin
+    : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, X-Sync-Secret',
+    'Vary': 'Origin'
+  };
+}
+
+function bufToHex(buffer) {
+  return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function timingSafeEqual(a, b) {
+  const strA = String(a || '');
+  const strB = String(b || '');
+  if (strA.length !== strB.length) return false;
+  let diff = 0;
+  for (let i = 0; i < strA.length; i++) {
+    diff |= strA.charCodeAt(i) ^ strB.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+async function getSystemSecret(env) {
+  if (env.AUTH_SECRET) return String(env.AUTH_SECRET);
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS _sys_secrets (key TEXT PRIMARY KEY, value TEXT)`).run();
+  let row = await env.DB.prepare(`SELECT value FROM _sys_secrets WHERE key = 'jwt_secret'`).first();
+  if (!row || !row.value) {
+    const rnd = new Uint8Array(32);
+    crypto.getRandomValues(rnd);
+    const newSecret = bufToHex(rnd);
+    await env.DB.prepare(`INSERT OR IGNORE INTO _sys_secrets (key, value) VALUES ('jwt_secret', ?)`).bind(newSecret).run();
+    row = await env.DB.prepare(`SELECT value FROM _sys_secrets WHERE key = 'jwt_secret'`).first();
+  }
+  return row.value;
+}
+
+async function hmacSha256Hex(message, secret) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+  return bufToHex(sig);
+}
+
+async function verifyToken(tokenStr, secret) {
+  if (!tokenStr || typeof tokenStr !== 'string') return null;
+  const parts = tokenStr.split('.');
+  if (parts.length !== 2) return null;
+  const [b64, sig] = parts;
+  const expectedSig = await hmacSha256Hex(b64, secret);
+  if (!timingSafeEqual(sig, expectedSig)) return null;
+  try {
+    const pad = b64.replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(pad);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const payload = JSON.parse(new TextDecoder().decode(bytes));
+    if (!payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function verifyAdminOrSync(request, env) {
+  // 1. Check Admin Bearer Token
+  const authHeader = request.headers.get('Authorization') || '';
+  if (authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7).trim();
+    const secret = await getSystemSecret(env);
+    const payload = await verifyToken(token, secret);
+    if (payload && payload.role === 'admin') {
+      return { ok: true, role: 'admin', user: payload.sub };
+    }
+  }
+
+  // 2. Check X-Sync-Secret header from db_sync.py
+  const syncSecretHeader = (request.headers.get('X-Sync-Secret') || '').trim();
+  if (syncSecretHeader && syncSecretHeader.length >= 32) {
+    if (env.SYNC_SECRET && timingSafeEqual(syncSecretHeader, String(env.SYNC_SECRET))) {
+      return { ok: true, role: 'sync' };
+    }
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS _sys_secrets (key TEXT PRIMARY KEY, value TEXT)`).run();
+    let row = await env.DB.prepare(`SELECT value FROM _sys_secrets WHERE key = 'sync_secret'`).first();
+    if (!row || !row.value) {
+      await env.DB.prepare(`INSERT OR IGNORE INTO _sys_secrets (key, value) VALUES ('sync_secret', ?)`).bind(syncSecretHeader).run();
+      row = await env.DB.prepare(`SELECT value FROM _sys_secrets WHERE key = 'sync_secret'`).first();
+    }
+    if (row && row.value && timingSafeEqual(syncSecretHeader, row.value)) {
+      return { ok: true, role: 'sync' };
+    }
+  }
+
+  return { ok: false };
+}
 
 export async function onRequest(context) {
   const { request, env } = context;
-
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
-  };
+  const corsHeaders = getCorsHeaders(request);
 
   // ==================== OPTIONS ====================
   if (request.method === 'OPTIONS') {
@@ -31,6 +140,24 @@ export async function onRequest(context) {
       }),
       {
         status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          ...corsHeaders
+        }
+      }
+    );
+  }
+
+  // ==================== ตรวจสอบสิทธิ์ Admin หรือ Sync Worker ====================
+  const auth = await verifyAdminOrSync(request, env);
+  if (!auth.ok) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Unauthorized: ไม่มีสิทธิ์เข้าถึงหรือซิงค์ฐานข้อมูล'
+      }),
+      {
+        status: 401,
         headers: {
           'Content-Type': 'application/json',
           ...corsHeaders
@@ -284,7 +411,6 @@ export async function onRequest(context) {
             'N'
           );
 
-          // เพิ่ม 3 field นี้ให้ตรงกับตารางเดิม
           const billType = String(
             t.BillType ||
             t.bill_type ||
@@ -454,7 +580,6 @@ export async function onRequest(context) {
           const bType = String(p.BillType || p.bill_type || '2');
           const bDate = String(p.BillDate || p.bill_date || '');
 
-          // Direct UPDATE to guarantee bill_type is updated regardless of table constraint variations
           payStmts.push(
             env.DB.prepare(`
               UPDATE payments
@@ -464,7 +589,6 @@ export async function onRequest(context) {
             `).bind(bType, bDate, bDate, bno)
           );
 
-          // INSERT OR REPLACE to ensure row exists
           payStmts.push(
             env.DB.prepare(`
               INSERT OR REPLACE INTO payments
@@ -498,7 +622,6 @@ export async function onRequest(context) {
           await env.DB.batch(chunk);
         }
 
-        // Also update KV if available to ensure cache consistency
         if (env.PAWNSHOP_KV) {
           try {
             const raw = await env.PAWNSHOP_KV.get('db_sync_latest');
@@ -533,22 +656,24 @@ export async function onRequest(context) {
 
       if (data.config && typeof data.config === 'object') {
 
-        const cfgStmts = Object.entries(data.config).map(
-          ([k, v]) =>
+        const cfgStmts = Object.entries(data.config)
+          .filter(([k]) => !String(k).startsWith('_') && String(k) !== 'runno')
+          .map(
+            ([k, v]) =>
 
-            env.DB.prepare(`
-              INSERT INTO config (key, value)
+              env.DB.prepare(`
+                INSERT INTO config (key, value)
 
-              VALUES (?, ?)
+                VALUES (?, ?)
 
-              ON CONFLICT(key)
-              DO UPDATE SET
-                value = excluded.value
-            `).bind(
-              String(k),
-              String(v ?? '')
-            )
-        );
+                ON CONFLICT(key)
+                DO UPDATE SET
+                  value = excluded.value
+              `).bind(
+                String(k),
+                String(v ?? '')
+              )
+          );
 
         if (cfgStmts.length > 0) {
           await env.DB.batch(cfgStmts);
@@ -655,6 +780,7 @@ export async function onRequest(context) {
         await env.DB.prepare(`
           SELECT key, value
           FROM config
+          WHERE key NOT LIKE '\\_%' ESCAPE '\\' AND key != 'runno'
         `).all();
 
 
@@ -662,7 +788,9 @@ export async function onRequest(context) {
 
       if (cfgRows) {
         cfgRows.forEach(row => {
-          config[row.key] = row.value;
+          if (!String(row.key).startsWith('_') && row.key !== 'runno') {
+            config[row.key] = row.value;
+          }
         });
       }
 

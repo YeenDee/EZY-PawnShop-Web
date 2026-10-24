@@ -1,22 +1,22 @@
 /**
  * Cloudflare Pages Function: /Slip/[file]
- * Serves payment slip images from Cloudflare R2 bucket (SLIP_BUCKET)
+ * Serves payment slip images from Cloudflare R2 bucket (SLIP_BUCKET) with strict path validation & security headers
  */
 export async function onRequest(context) {
-  const { request, env, params } = context;
-  const fileName = params.file;
+  const { env, params } = context;
+  const rawName = String(params.file || '').trim();
 
-  if (!fileName) {
-    return new Response('File name required', { status: 400 });
+  // ป้องกัน Path Traversal และอนุญาตเฉพาะนามสกุลรูปภาพที่ปลอดภัย
+  if (!rawName || !/^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp)$/i.test(rawName)) {
+    return new Response('Invalid file name', { status: 400 });
   }
 
-  // Check R2 bucket binding
   if (!env.SLIP_BUCKET) {
     return new Response('R2 SLIP_BUCKET not configured', { status: 503 });
   }
 
   try {
-    const objectKey = `Slip/${fileName}`;
+    const objectKey = `Slip/${rawName}`;
     const object = await env.SLIP_BUCKET.get(objectKey);
 
     if (!object) {
@@ -26,17 +26,16 @@ export async function onRequest(context) {
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     headers.set('etag', object.httpEtag);
-    headers.set('Cache-Control', 'public, max-age=31536000, immutable');
-    
-    // Default content type if not set
-    if (!headers.has('Content-Type')) {
-      if (fileName.toLowerCase().endsWith('.png')) {
-        headers.set('Content-Type', 'image/png');
-      } else if (fileName.toLowerCase().endsWith('.webp')) {
-        headers.set('Content-Type', 'image/webp');
-      } else {
-        headers.set('Content-Type', 'image/jpeg');
-      }
+    headers.set('Cache-Control', 'private, max-age=3600');
+    headers.set('X-Content-Type-Options', 'nosniff');
+    headers.set('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'");
+
+    if (rawName.toLowerCase().endsWith('.png')) {
+      headers.set('Content-Type', 'image/png');
+    } else if (rawName.toLowerCase().endsWith('.webp')) {
+      headers.set('Content-Type', 'image/webp');
+    } else {
+      headers.set('Content-Type', 'image/jpeg');
     }
 
     return new Response(object.body, { headers });
