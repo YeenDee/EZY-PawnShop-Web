@@ -140,6 +140,9 @@ export async function onRequest(context) {
         const lineSecretVal = (lineSecretRow && lineSecretRow.value) ? String(lineSecretRow.value).trim() : '';
 
         config.line_enabled = Boolean(lineTokenVal);
+        if (!config.line_webhook_url) {
+          config.line_webhook_url = 'https://expsoon.rainbow-ocean.site/line/webhook';
+        }
 
         // Only expose full LINE token & secret to authenticated Admin
         const adminPayload = await requireAdminAuth(request, env);

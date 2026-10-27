@@ -36,7 +36,9 @@ const DEFAULT_CONFIG = {
   bank_color: '#178e3d',
   bank_acc: '026-8-91256-0',
   bank_acc_name: 'บจ. อีซี่ โรงรับจำนำ 2006',
-  system_id: 3
+  system_id: 3,
+  line_oa_id: '',
+  line_webhook_url: 'https://expsoon.rainbow-ocean.site/line/webhook'
 };
 
 const DEFAULT_SYNC_HISTORY = [
@@ -2945,7 +2947,7 @@ async function renderAdminSettings() {
   if (lineSecretEl) lineSecretEl.value = db.config.line_channel_secret || '';
   const webhookEl = document.getElementById('cfg-line-webhook-url');
   if (webhookEl) {
-    webhookEl.value = db.config.line_webhook_url || '';
+    webhookEl.value = db.config.line_webhook_url || 'https://expsoon.rainbow-ocean.site/line/webhook';
   }
   
   // 2. Render positions table
