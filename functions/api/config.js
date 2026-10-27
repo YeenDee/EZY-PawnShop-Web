@@ -21,7 +21,8 @@ const ALLOWED_CONFIG_KEYS = new Set([
   'bank_acc',
   'bank_acc_name',
   'system_id',
-  'line_oa_id'
+  'line_oa_id',
+  'line_webhook_url'
 ]);
 
 function getCorsHeaders(request) {

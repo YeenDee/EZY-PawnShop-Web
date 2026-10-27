@@ -49,7 +49,7 @@
       <div class="login-logo-container">
         <img src="Logo.ico" alt="EZY Pawnshop Logo">
         <h2>EZY PAWNSHOP 2006</h2>
-        <p>WEB APPLICATION PORTAL Version 1.67</p>
+        <p>WEB APPLICATION PORTAL Version 1.68</p>
       </div>
       
       <form id="login-form" onsubmit="event.preventDefault(); handleLogin();">
@@ -824,13 +824,8 @@
                     </div>
                   </div>
                   <div class="form-group" style="margin-bottom: 8px;">
-                    <label for="cfg-line-webhook-url">Webhook URL (คัดลอกไปวางใน LINE Developers Console)</label>
-                    <div style="display: flex; gap: 8px;">
-                      <input type="text" id="cfg-line-webhook-url" class="input-field" value="https://ezy-pawnshop2006.rainbow-ocean.site/api/line-webhook" readonly style="background-color: var(--bg-light); font-size: 12px; color: var(--text-medium);">
-                      <button type="button" class="btn btn-secondary" onclick="copyLineWebhookUrl()" style="width: auto; padding: 0 14px; white-space: nowrap; font-size: 12px;">
-                        <i class="fa-regular fa-copy"></i> คัดลอก
-                      </button>
-                    </div>
+                    <label for="cfg-line-webhook-url">Webhook URL</label>
+                    <input type="text" id="cfg-line-webhook-url" class="input-field" placeholder="ตัวอย่าง: https://ezy-pawnshop2006.rainbow-ocean.site/api/line-webhook" autocomplete="off">
                   </div>
                 </div>
 
@@ -1068,6 +1063,6 @@
   </div>
 
   <!-- JavaScript Logics -->
-  <script src="app.js?v=167"></script>
+  <script src="app.js?v=168"></script>
 </body>
 </html>

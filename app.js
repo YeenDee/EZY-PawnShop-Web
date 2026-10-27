@@ -2944,8 +2944,8 @@ async function renderAdminSettings() {
   const lineSecretEl = document.getElementById('cfg-edit-line-secret');
   if (lineSecretEl) lineSecretEl.value = db.config.line_channel_secret || '';
   const webhookEl = document.getElementById('cfg-line-webhook-url');
-  if (webhookEl && window.location && window.location.origin && window.location.origin.startsWith('http')) {
-    webhookEl.value = `${window.location.origin}/api/line-webhook`;
+  if (webhookEl) {
+    webhookEl.value = db.config.line_webhook_url || '';
   }
   
   // 2. Render positions table
@@ -3058,9 +3058,11 @@ async function saveBankSettings() {
   const lineOaEl = document.getElementById('cfg-edit-line-oa-id');
   const lineTokenEl = document.getElementById('cfg-edit-line-token');
   const lineSecretEl = document.getElementById('cfg-edit-line-secret');
+  const lineWebhookEl = document.getElementById('cfg-line-webhook-url');
   const lineOaId = lineOaEl ? lineOaEl.value.trim() : '';
   const lineToken = lineTokenEl ? lineTokenEl.value.trim() : '';
   const lineSecret = lineSecretEl ? lineSecretEl.value.trim() : '';
+  const lineWebhookUrl = lineWebhookEl ? lineWebhookEl.value.trim() : '';
   
   db.config.shop_name = shopName;
   db.config.bank_logo = logo;
@@ -3070,6 +3072,7 @@ async function saveBankSettings() {
   db.config.bank_color = color;
   db.config.system_id = systemId;
   db.config.line_oa_id = lineOaId;
+  db.config.line_webhook_url = lineWebhookUrl;
   
   // 1. บันทึกเฉพาะข้อมูลสาธารณะลงในเครื่อง (LocalStorage) และอัปเดต UI ทันที (ไม่เก็บ Token ลับลง localStorage)
   const publicConfig = {
@@ -3080,7 +3083,8 @@ async function saveBankSettings() {
     bank_acc_name: accName,
     bank_color: color,
     system_id: systemId,
-    line_oa_id: lineOaId
+    line_oa_id: lineOaId,
+    line_webhook_url: lineWebhookUrl
   };
   localStorage.setItem('pawn_config', JSON.stringify(publicConfig));
   db.config.line_channel_token = lineToken;
