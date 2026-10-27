@@ -1,7 +1,8 @@
 /**
  * Cloudflare Pages Function: /api/config
- * Fast endpoint to read and update bank & shop configuration
- * GET = Public (สำหรับแสดงชื่อร้านและเลขบัญชีรับโอน)
+ * Fast endpoint to read and update bank, shop & LINE OA configuration
+ * GET = Public (สำหรับแสดงชื่อร้าน เลขบัญชีรับโอน และ LINE ID ร้าน)
+ *       หากแนบ Admin Bearer Token จะส่งค่า line_channel_token และ line_channel_secret ให้หน้าตั้งค่าด้วย
  * POST = ต้องยืนยันตัวตนด้วย Admin Bearer Token เท่านั้น
  */
 
@@ -19,7 +20,8 @@ const ALLOWED_CONFIG_KEYS = new Set([
   'bank_color',
   'bank_acc',
   'bank_acc_name',
-  'system_id'
+  'system_id',
+  'line_oa_id'
 ]);
 
 function getCorsHeaders(request) {
@@ -115,7 +117,7 @@ export async function onRequest(context) {
     return new Response(null, { headers: corsHeaders });
   }
 
-  // GET: Read public bank & shop config
+  // GET: Read bank & shop config (plus LINE secrets if authenticated as Admin)
   if (request.method === 'GET') {
     let config = {};
     if (env.DB) {
@@ -127,11 +129,28 @@ export async function onRequest(context) {
               config[r.key] = r.value;
             }
           });
-          if (Object.keys(config).length > 0) {
-            return new Response(JSON.stringify({ success: true, config }), {
-              headers: { 'Content-Type': 'application/json', ...corsHeaders }
-            });
-          }
+        }
+
+        // Check LINE token status in _sys_secrets
+        await env.DB.prepare(`CREATE TABLE IF NOT EXISTS _sys_secrets (key TEXT PRIMARY KEY, value TEXT)`).run();
+        const lineTokenRow = await env.DB.prepare(`SELECT value FROM _sys_secrets WHERE key = 'line_channel_token'`).first();
+        const lineSecretRow = await env.DB.prepare(`SELECT value FROM _sys_secrets WHERE key = 'line_channel_secret'`).first();
+        const lineTokenVal = (lineTokenRow && lineTokenRow.value) ? String(lineTokenRow.value).trim() : '';
+        const lineSecretVal = (lineSecretRow && lineSecretRow.value) ? String(lineSecretRow.value).trim() : '';
+
+        config.line_enabled = Boolean(lineTokenVal);
+
+        // Only expose full LINE token & secret to authenticated Admin
+        const adminPayload = await requireAdminAuth(request, env);
+        if (adminPayload) {
+          config.line_channel_token = lineTokenVal;
+          config.line_channel_secret = lineSecretVal;
+        }
+
+        if (Object.keys(config).length > 0) {
+          return new Response(JSON.stringify({ success: true, config }), {
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
         }
       } catch(e) {}
     }
@@ -185,7 +204,7 @@ export async function onRequest(context) {
         });
       }
 
-      if (Object.keys(cfg).length === 0) {
+      if (Object.keys(cfg).length === 0 && rawCfg.line_channel_token === undefined && rawCfg.line_channel_secret === undefined) {
         return new Response(JSON.stringify({ success: false, error: 'ไม่พบข้อมูลการตั้งค่าที่ถูกต้อง' }), {
           status: 400,
           headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -195,11 +214,27 @@ export async function onRequest(context) {
       if (env.DB) {
         const stmts = [
           env.DB.prepare(`CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)`),
+          env.DB.prepare(`CREATE TABLE IF NOT EXISTS _sys_secrets (key TEXT PRIMARY KEY, value TEXT)`),
           ...Object.entries(cfg).map(([k, v]) =>
             env.DB.prepare(`INSERT INTO config (key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
               .bind(String(k), String(v ?? ''))
           )
         ];
+
+        // Save LINE Messaging API secrets into _sys_secrets table
+        if (rawCfg.line_channel_token !== undefined) {
+          stmts.push(
+            env.DB.prepare(`INSERT INTO _sys_secrets (key, value) VALUES ('line_channel_token', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
+              .bind(String(rawCfg.line_channel_token ?? '').trim())
+          );
+        }
+        if (rawCfg.line_channel_secret !== undefined) {
+          stmts.push(
+            env.DB.prepare(`INSERT INTO _sys_secrets (key, value) VALUES ('line_channel_secret', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
+              .bind(String(rawCfg.line_channel_secret ?? '').trim())
+          );
+        }
+
         await env.DB.batch(stmts);
       }
 

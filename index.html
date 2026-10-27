@@ -85,14 +85,33 @@
     <!-- ==================== 2. OTP MODAL DIALOG ==================== -->
     <div id="otp-modal" class="modal-overlay">
       <div class="modal-content">
-        <div class="otp-icon"><i class="fa-solid fa-shield-halved"></i></div>
-        <h3>ยืนยันรหัส OTP</h3>
-        <p style="font-size: 13px; color: var(--text-medium); margin-top: 6px;">ระบบได้ส่งรหัส OTP ไปยังเบอร์โทรศัพท์ของท่านแล้ว</p>
+        <div class="otp-icon" style="background: rgba(6, 199, 85, 0.12); color: #06C755;"><i class="fa-brands fa-line" style="font-size: 28px;"></i></div>
+        <h3>ยืนยันรหัส OTP ผ่าน LINE</h3>
+        <p id="otp-modal-subtitle" style="font-size: 13px; color: var(--text-medium); margin-top: 6px;">ส่งรหัส OTP 6 หลักนี้ไปยังแชท LINE ของร้านเพื่อยืนยันตัวตน</p>
         
-        <!-- Mock SMS Notification Banner -->
-        <div class="otp-simulated-sms">
-          <strong><i class="fa-solid fa-comment-sms"></i> Line SMS:</strong><br>
-          รหัสยืนยันการเข้าสู่ระบบ EZY Pawnshop คือ <span id="mock-otp-code" class="number" style="font-weight: 700; color: var(--primary-red); letter-spacing: 1px;">XXXXXX</span> (ใช้สำหรับทดสอบ)
+        <!-- OTP Code Banner -->
+        <div class="otp-simulated-sms" style="text-align: center; padding: 14px; border-color: #06C755; background-color: #f0fdf4;">
+          <div style="font-size: 12px; color: var(--text-medium); margin-bottom: 4px;">
+            <i class="fa-solid fa-key" style="color: #06C755;"></i> รหัสยืนยันการเข้าสู่ระบบ (OTP 6 หลัก) ของท่านคือ:
+          </div>
+          <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin: 6px 0;">
+            <span id="mock-otp-code" class="number" style="font-size: 26px; font-weight: 800; color: var(--primary-red); letter-spacing: 3px;">XXXXXX</span>
+            <button type="button" class="copy-btn" onclick="copyOtpCode()" title="คัดลอกรหัส OTP" style="padding: 6px 10px; font-size: 13px;">
+              <i class="fa-regular fa-copy"></i> คัดลอก
+            </button>
+          </div>
+          <div id="otp-line-oa-display" style="font-size: 12px; color: #15803d; font-weight: 600;"></div>
+        </div>
+
+        <!-- Direct LINE Deep Link Button -->
+        <div id="otp-line-action-container" style="margin-bottom: 14px;">
+          <a id="btn-open-line-otp" href="#" target="_blank" rel="noopener noreferrer" class="btn" style="background-color: #06C755; color: #ffffff; font-weight: 700; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; border-radius: var(--radius-sm); box-shadow: 0 4px 12px rgba(6, 199, 85, 0.25);">
+            <i class="fa-brands fa-line" style="font-size: 20px;"></i> กดเพื่อส่งรหัส OTP ยืนยันในแอป LINE
+          </a>
+          <div id="otp-line-status-text" style="font-size: 12px; color: var(--text-medium); margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+            <i class="fa-solid fa-spinner fa-spin" style="color: #06C755;"></i>
+            <span>รอข้อความตอบกลับ (Reply) จาก LINE... เมื่อส่งแล้วระบบจะเข้าสู่หน้าหลักอัตโนมัติ</span>
+          </div>
         </div>
         
         <div class="otp-inputs">
@@ -780,6 +799,41 @@
                     <option value="3">3</option>
                   </select>
                 </div>
+
+                <!-- ตั้งค่า LINE Messaging API สำหรับยืนยัน OTP ลูกค้า -->
+                <div style="border-top: 1px dashed var(--border-medium); margin: 20px 0 16px 0; padding-top: 16px;">
+                  <h4 style="font-size: 14px; color: #06C755; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+                    <i class="fa-brands fa-line" style="font-size: 18px;"></i> ตั้งค่า LINE Messaging API (ยืนยัน OTP ลูกค้าแบบ Reply)
+                  </h4>
+                  <div class="form-group">
+                    <label for="cfg-edit-line-oa-id">LINE Official ID ของร้าน (Basic ID เช่น @ezypawnshop)</label>
+                    <input type="text" id="cfg-edit-line-oa-id" class="input-field" placeholder="ตัวอย่าง: @ezypawnshop" autocomplete="off">
+                  </div>
+                  <div class="form-group">
+                    <label for="cfg-edit-line-token">LINE Channel Access Token (Long-lived)</label>
+                    <div style="position: relative; display: flex; align-items: center;">
+                      <input type="password" id="cfg-edit-line-token" class="input-field" placeholder="วาง Channel Access Token จาก LINE Developers..." autocomplete="off" style="padding-right: 42px;">
+                      <i id="toggle-cfg-line-token" class="fa-solid fa-eye-slash" onclick="togglePasswordVisibility('cfg-edit-line-token', 'toggle-cfg-line-token')" style="position: absolute; right: 14px; cursor: pointer; color: var(--text-medium); font-size: 16px; z-index: 10; padding: 6px;" title="แสดง/ซ่อน Token"></i>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label for="cfg-edit-line-secret">LINE Channel Secret (ตัวเลือกเสริมสำหรับตรวจ Signature)</label>
+                    <div style="position: relative; display: flex; align-items: center;">
+                      <input type="password" id="cfg-edit-line-secret" class="input-field" placeholder="วาง Channel Secret จาก LINE Developers..." autocomplete="off" style="padding-right: 42px;">
+                      <i id="toggle-cfg-line-secret" class="fa-solid fa-eye-slash" onclick="togglePasswordVisibility('cfg-edit-line-secret', 'toggle-cfg-line-secret')" style="position: absolute; right: 14px; cursor: pointer; color: var(--text-medium); font-size: 16px; z-index: 10; padding: 6px;" title="แสดง/ซ่อน Secret"></i>
+                    </div>
+                  </div>
+                  <div class="form-group" style="margin-bottom: 8px;">
+                    <label for="cfg-line-webhook-url">Webhook URL (คัดลอกไปวางใน LINE Developers Console)</label>
+                    <div style="display: flex; gap: 8px;">
+                      <input type="text" id="cfg-line-webhook-url" class="input-field" value="https://ezy-pawnshop2006.rainbow-ocean.site/api/line-webhook" readonly style="background-color: var(--bg-light); font-size: 12px; color: var(--text-medium);">
+                      <button type="button" class="btn btn-secondary" onclick="copyLineWebhookUrl()" style="width: auto; padding: 0 14px; white-space: nowrap; font-size: 12px;">
+                        <i class="fa-regular fa-copy"></i> คัดลอก
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 <button type="submit" class="btn btn-primary" style="margin-top: 10px;">
                   <i class="fa-solid fa-floppy-disk"></i> บันทึกข้อมูลตั้งค่าระบบ
                 </button>

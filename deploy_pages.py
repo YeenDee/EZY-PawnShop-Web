@@ -46,6 +46,7 @@ UPLOAD_FILES = [
     ('functions/api/billseq.js',          '/functions/api/billseq.js'),
     ('functions/api/backups.js',          '/functions/api/backups.js'),
     ('functions/api/backup/[[filename]].js', '/functions/api/backup/[[filename]].js'),
+    ('functions/api/line-webhook.js',     '/functions/api/line-webhook.js'),
     ('functions/Slip/[file].js',          '/functions/Slip/[file].js'),
 ]
 

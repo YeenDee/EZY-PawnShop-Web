@@ -1,6 +1,7 @@
 /**
  * Cloudflare Pages Function: /api/login
- * Handles customer authentication and server-side OTP verification against D1 SQL database
+ * Handles customer authentication and server-side OTP verification (with LINE Reply API integration)
+ * against D1 SQL database, issuing a signed Customer Bearer authToken upon verification.
  */
 
 const ALLOWED_ORIGINS = [
@@ -94,6 +95,84 @@ async function verifyToken(tokenStr, secret) {
   }
 }
 
+async function ensureOtpTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS _otp_sessions (
+      session_id TEXT PRIMARY KEY,
+      otp_code TEXT,
+      id_card TEXT,
+      cust_code TEXT,
+      status TEXT,
+      line_user_id TEXT,
+      created_at INTEGER,
+      expires_at INTEGER
+    )
+  `).run();
+}
+
+async function getLineSettings(env) {
+  let lineToken = String(env.LINE_CHANNEL_ACCESS_TOKEN || '').trim();
+  let lineOaId = '';
+  try {
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS _sys_secrets (key TEXT PRIMARY KEY, value TEXT)`).run();
+    const tokenRow = await env.DB.prepare(`SELECT value FROM _sys_secrets WHERE key = 'line_channel_token'`).first();
+    if (tokenRow && tokenRow.value && String(tokenRow.value).trim()) {
+      lineToken = String(tokenRow.value).trim();
+    }
+    const oaRow = await env.DB.prepare(`SELECT value FROM config WHERE key = 'line_oa_id'`).first();
+    if (oaRow && oaRow.value) {
+      lineOaId = String(oaRow.value).trim();
+    }
+  } catch (e) {}
+  return {
+    lineRequired: Boolean(lineToken),
+    lineOaId
+  };
+}
+
+async function issueCustomerAuthResponse(env, secret, payload, corsHeaders) {
+  const custId = String(payload.sub || '');
+  const custCode = String(payload.custCode || custId);
+  const plainId = custId.replace(/[^0-9a-zA-Z]/g, '');
+
+  const { results: matchedCusts } = await env.DB.prepare(`
+    SELECT id as Id, cust_code as CustCode, name as Name, tel as Tel
+    FROM customers
+    WHERE id = ? OR cust_code = ? OR replace(id, '-', '') = ? OR replace(cust_code, '-', '') = ?
+  `).bind(custId, custCode, plainId, plainId).all();
+
+  if (!matchedCusts || matchedCusts.length === 0) {
+    return new Response(JSON.stringify({ success: false, error: 'ไม่พบข้อมูลลูกค้าในระบบ' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  const customer = matchedCusts[0];
+  const { results: tickets } = await env.DB.prepare(`
+    SELECT system_id as SystemID, bud_year as BudYear, book_no as BookNo, doc_no as DocNo, bill_stat as BillStat, bill_type as BillType, bill_date as BillDate, bill_no as BillNo, asstotal as Asstotal, month_total as MonthTotal, month_int as MonthInt, totalint as Totalint, app_date as AppDate, exp_date as ExpDate, model as Model, id as Id, cust_code as CustCode
+    FROM tickets
+    WHERE id = ? OR cust_code = ? OR replace(id, '-', '') = ? OR replace(cust_code, '-', '') = ?
+  `).bind(customer.Id, customer.CustCode || customer.Id, plainId, plainId).all();
+
+  const sessionToken = await signToken({
+    sub: customer.Id,
+    custCode: customer.CustCode || customer.Id,
+    role: 'customer',
+    exp: Date.now() + 4 * 60 * 60 * 1000 // อายุเซสชันลูกค้า 4 ชั่วโมง
+  }, secret);
+
+  return new Response(JSON.stringify({
+    success: true,
+    verified: true,
+    token: sessionToken,
+    customer,
+    tickets: tickets || []
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders }
+  });
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const corsHeaders = getCorsHeaders(request);
@@ -114,7 +193,41 @@ export async function onRequest(context) {
         });
       }
 
-      // ==================== STEP 2: VERIFY OTP & ISSUE CUSTOMER TOKEN ====================
+      // ==================== AUTO-POLLING: CHECK IF OTP WAS VERIFIED VIA LINE REPLY API ====================
+      if (action === 'check_otp') {
+        const otpToken = String(data.otp_token || '').trim();
+        const secret = await getSystemSecret(env);
+        const payload = await verifyToken(otpToken, secret);
+
+        if (!payload || payload.role !== 'customer_otp' || !payload.sessionId) {
+          return new Response(JSON.stringify({ success: false, expired: true, error: 'รหัส OTP หมดอายุแล้ว' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+
+        await ensureOtpTable(env);
+        const session = await env.DB.prepare(
+          `SELECT session_id, status, expires_at FROM _otp_sessions WHERE session_id = ?`
+        ).bind(payload.sessionId).first();
+
+        if (session && session.status === 'VERIFIED' && Number(session.expires_at) > Date.now()) {
+          // ลบเซสชัน OTP ทันทีเพื่อป้องกันการใช้ซ้ำ (One-Time Use) และออก authToken ให้ลูกค้า
+          await env.DB.prepare(`DELETE FROM _otp_sessions WHERE session_id = ?`).bind(payload.sessionId).run();
+          return await issueCustomerAuthResponse(env, secret, payload, corsHeaders);
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          verified: false,
+          status: session ? session.status : 'EXPIRED'
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+
+      // ==================== STEP 2: VERIFY OTP & ISSUE CUSTOMER authToken ====================
       if (action === 'verify_otp') {
         const otpToken = String(data.otp_token || '').trim();
         const enteredOtp = String(data.otp || '').trim();
@@ -128,53 +241,42 @@ export async function onRequest(context) {
           });
         }
 
-        const enteredHash = await hmacSha256Hex(enteredOtp, secret);
-        if (!timingSafeEqual(enteredHash, payload.otpHash)) {
-          return new Response(JSON.stringify({ success: false, error: 'รหัส OTP ไม่ถูกต้อง กรุณากรอกใหม่อีกครั้ง' }), {
-            status: 401,
-            headers: { 'Content-Type': 'application/json', ...corsHeaders }
-          });
+        await ensureOtpTable(env);
+        const { lineRequired } = await getLineSettings(env);
+        let session = null;
+        if (payload.sessionId) {
+          session = await env.DB.prepare(
+            `SELECT session_id, status, expires_at FROM _otp_sessions WHERE session_id = ?`
+          ).bind(payload.sessionId).first();
         }
 
-        const custId = String(payload.sub || '');
-        const custCode = String(payload.custCode || custId);
-        const plainId = custId.replace(/[^0-9a-zA-Z]/g, '');
-
-        const { results: matchedCusts } = await env.DB.prepare(`
-          SELECT id as Id, cust_code as CustCode, name as Name, tel as Tel
-          FROM customers
-          WHERE id = ? OR cust_code = ? OR replace(id, '-', '') = ? OR replace(cust_code, '-', '') = ?
-        `).bind(custId, custCode, plainId, plainId).all();
-
-        if (!matchedCusts || matchedCusts.length === 0) {
-          return new Response(JSON.stringify({ success: false, error: 'ไม่พบข้อมูลลูกค้าในระบบ' }), {
-            status: 404,
-            headers: { 'Content-Type': 'application/json', ...corsHeaders }
-          });
+        // กรณีตั้งค่า LINE Token ไว้แล้ว บังคับให้ต้องส่งรหัส OTP ยืนยันผ่านแชท LINE OA ก่อน
+        if (lineRequired) {
+          if (!session || session.status !== 'VERIFIED') {
+            return new Response(JSON.stringify({
+              success: false,
+              error: 'กรุณาส่งรหัส OTP 6 หลักนี้ไปยังแชท LINE ของร้านเพื่อยืนยันตัวตนก่อนครับ (เมื่อบอทตอบกลับใน LINE แล้ว ระบบจะเข้าสู่หน้าหลักอัตโนมัติ)'
+            }), {
+              status: 401,
+              headers: { 'Content-Type': 'application/json', ...corsHeaders }
+            });
+          }
+        } else {
+          // Fallback กรณีแอดมินยังไม่ได้ตั้งค่า LINE Token: ตรวจสอบรหัส 6 หลักที่กรอกกับ Hash บนเซิร์ฟเวอร์
+          const enteredHash = await hmacSha256Hex(enteredOtp, secret);
+          if (!timingSafeEqual(enteredHash, payload.otpHash)) {
+            return new Response(JSON.stringify({ success: false, error: 'รหัส OTP ไม่ถูกต้อง กรุณากรอกใหม่อีกครั้ง' }), {
+              status: 401,
+              headers: { 'Content-Type': 'application/json', ...corsHeaders }
+            });
+          }
         }
 
-        const customer = matchedCusts[0];
-        const { results: tickets } = await env.DB.prepare(`
-          SELECT system_id as SystemID, bud_year as BudYear, book_no as BookNo, doc_no as DocNo, bill_stat as BillStat, bill_type as BillType, bill_date as BillDate, bill_no as BillNo, asstotal as Asstotal, month_total as MonthTotal, month_int as MonthInt, totalint as Totalint, app_date as AppDate, exp_date as ExpDate, model as Model, id as Id, cust_code as CustCode
-          FROM tickets
-          WHERE id = ? OR cust_code = ? OR replace(id, '-', '') = ? OR replace(cust_code, '-', '') = ?
-        `).bind(customer.Id, customer.CustCode || customer.Id, plainId, plainId).all();
+        if (payload.sessionId) {
+          await env.DB.prepare(`DELETE FROM _otp_sessions WHERE session_id = ?`).bind(payload.sessionId).run();
+        }
 
-        const sessionToken = await signToken({
-          sub: customer.Id,
-          custCode: customer.CustCode || customer.Id,
-          role: 'customer',
-          exp: Date.now() + 4 * 60 * 60 * 1000 // อายุเซสชันลูกค้า 4 ชั่วโมง
-        }, secret);
-
-        return new Response(JSON.stringify({
-          success: true,
-          token: sessionToken,
-          customer,
-          tickets: tickets || []
-        }), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+        return await issueCustomerAuthResponse(env, secret, payload, corsHeaders);
       }
 
       // ==================== STEP 1: CHECK CUSTOMER ID & PHONE -> GENERATE OTP ====================
@@ -184,7 +286,7 @@ export async function onRequest(context) {
       const plainId = inputId.replace(/[^0-9a-zA-Z]/g, '');
       const plainContact = inputContact.replace(/[^0-9]/g, '');
 
-      // บังคับต้องระบุทั้งเลขบัตรประชาชน/รหัสลูกค้า และเบอร์โทรศัพท์อย่างน้อย 9 หลัก (ป้องกันการเว้นว่างเบอร์โทรเพื่อข้ามการเช็ค)
+      // บังคับต้องระบุทั้งเลขบัตรประชาชน/รหัสลูกค้า และเบอร์โทรศัพท์อย่างน้อย 9 หลัก
       if (!plainId || !plainContact || plainContact.length < 9) {
         return new Response(JSON.stringify({
           success: false,
@@ -205,7 +307,6 @@ export async function onRequest(context) {
         const customer = matchedCusts[0];
         const dbTel = String(customer.Tel || '').replace(/\D/g, '');
 
-        // ต้องมีเบอร์โทรศัพท์ในฐานข้อมูล และตรงกับที่กรอกเข้ามาเท่านั้น
         const phoneValid = dbTel.length >= 9 && (
           dbTel === plainContact ||
           (dbTel.endsWith(plainContact.slice(-9)) && plainContact.endsWith(dbTel.slice(-9)))
@@ -213,24 +314,54 @@ export async function onRequest(context) {
 
         if (phoneValid) {
           const secret = await getSystemSecret(env);
+          await ensureOtpTable(env);
+
+          const now = Date.now();
+          const exp = now + 5 * 60 * 1000; // OTP หมดอายุใน 5 นาที
+
+          // ล้างเซสชัน OTP ที่หมดอายุแล้วออกจาก D1
+          await env.DB.prepare(`DELETE FROM _otp_sessions WHERE expires_at < ?`).bind(now).run();
+
+          // สุ่มรหัส OTP 6 หลัก และ Session ID
           const rnd = new Uint32Array(1);
           crypto.getRandomValues(rnd);
           const otpCode = String(100000 + (rnd[0] % 900000));
-          const otpHash = await hmacSha256Hex(otpCode, secret);
 
+          const sidBytes = new Uint8Array(16);
+          crypto.getRandomValues(sidBytes);
+          const sessionId = bufToHex(sidBytes);
+
+          await env.DB.prepare(`
+            INSERT INTO _otp_sessions (session_id, otp_code, id_card, cust_code, status, line_user_id, created_at, expires_at)
+            VALUES (?, ?, ?, ?, 'PENDING', '', ?, ?)
+          `).bind(
+            sessionId,
+            otpCode,
+            customer.Id,
+            customer.CustCode || customer.Id,
+            now,
+            exp
+          ).run();
+
+          const otpHash = await hmacSha256Hex(otpCode, secret);
           const otpToken = await signToken({
             sub: customer.Id,
             custCode: customer.CustCode || customer.Id,
+            sessionId,
             role: 'customer_otp',
             otpHash,
-            exp: Date.now() + 5 * 60 * 1000 // OTP หมดอายุใน 5 นาที
+            exp
           }, secret);
+
+          const { lineRequired, lineOaId } = await getLineSettings(env);
 
           return new Response(JSON.stringify({
             success: true,
             otp_required: true,
             otp_token: otpToken,
-            otp_preview: otpCode
+            otp_preview: otpCode,
+            line_required: lineRequired,
+            line_oa_id: lineOaId
           }), {
             headers: { 'Content-Type': 'application/json', ...corsHeaders }
           });

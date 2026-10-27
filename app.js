@@ -452,6 +452,19 @@ async function handleLogin() {
     });
     if (userRes.ok) {
       const userData = await userRes.json();
+      // กรณี Admin ล็อกอินสำเร็จ เซิร์ฟเวอร์ออก authToken ทันทีโดยไม่ต้องผ่าน OTP
+      if (userData && userData.success && userData.token && !userData.otp_required) {
+        state.authToken = userData.token;
+        state.userRole = 'admin';
+        state.currentUser = normalizeKeys(userData.user || {});
+        if (loginBtn) {
+          loginBtn.disabled = false;
+          loginBtn.innerHTML = originalBtnText;
+        }
+        document.getElementById('login-view').classList.add('hidden');
+        await enterAdminPortal();
+        return;
+      }
       if (userData && userData.success && userData.otp_required && userData.otp_token) {
         state.pendingOtpToken = userData.otp_token;
         state.pendingRole = 'admin';
@@ -460,7 +473,7 @@ async function handleLogin() {
           loginBtn.disabled = false;
           loginBtn.innerHTML = originalBtnText;
         }
-        triggerOtpFlow(userData.otp_preview);
+        triggerOtpFlow(userData.otp_preview, '', false);
         return;
       }
     }
@@ -498,7 +511,7 @@ async function handleLogin() {
           loginBtn.disabled = false;
           loginBtn.innerHTML = originalBtnText;
         }
-        triggerOtpFlow(data.otp_preview);
+        triggerOtpFlow(data.otp_preview, data.line_oa_id || db.config.line_oa_id || '', Boolean(data.line_required));
         return;
       }
     }
@@ -520,20 +533,122 @@ async function handleLogin() {
   errorEl.classList.remove('hidden');
 }
 
-function triggerOtpFlow(otpPreviewCode) {
+function stopOtpPolling() {
+  if (state.otpPollTimer) {
+    clearInterval(state.otpPollTimer);
+    state.otpPollTimer = null;
+  }
+}
+
+function copyOtpCode() {
+  const code = state.otpCode || document.getElementById('mock-otp-code').innerText.trim();
+  if (!code || code === 'XXXXXX') return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(code).then(() => {
+      alert(`คัดลอกรหัส OTP: ${code} เรียบร้อยแล้ว`);
+    }).catch(() => {});
+  }
+}
+
+async function pollCustomerLineOtp() {
+  if (!state.pendingOtpToken || state.pendingRole !== 'customer') {
+    stopOtpPolling();
+    return;
+  }
+  try {
+    const res = await authFetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'check_otp',
+        otp_token: state.pendingOtpToken
+      })
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.expired) {
+      stopOtpPolling();
+      const statusEl = document.getElementById('otp-line-status-text');
+      if (statusEl) {
+        statusEl.innerHTML = '<span style="color: var(--primary-red); font-weight: 600;">❌ รหัส OTP หมดอายุแล้ว กรุณากดยกเลิกแล้วเข้าสู่ระบบใหม่</span>';
+      }
+      return;
+    }
+    if (data && data.success && data.verified && data.token) {
+      stopOtpPolling();
+      const statusEl = document.getElementById('otp-line-status-text');
+      if (statusEl) {
+        statusEl.innerHTML = '<span style="color: #15803d; font-weight: 700;"><i class="fa-solid fa-circle-check"></i> ยืนยันรหัส OTP ผ่าน LINE สำเร็จ! กำลังเข้าสู่ระบบ...</span>';
+      }
+      state.authToken = data.token;
+      state.userRole = 'customer';
+      state.pendingOtpToken = '';
+      state.pendingRole = null;
+      state.otpCode = '';
+
+      document.getElementById('otp-modal').classList.remove('active');
+      document.getElementById('login-view').classList.add('hidden');
+
+      state.currentUser = normalizeKeys(data.customer);
+      db.tickets = normalizeKeys(data.tickets || []);
+      db.customers = [state.currentUser];
+      enterCustomerPortal();
+    }
+  } catch (e) {}
+}
+
+function triggerOtpFlow(otpPreviewCode, lineOaId = '', lineRequired = false) {
+  stopOtpPolling();
   state.otpCode = String(otpPreviewCode || '');
+  state.lineRequired = Boolean(lineRequired);
   
   // Update UI and show modal
   document.getElementById('mock-otp-code').innerText = state.otpCode || 'XXXXXX';
   
-  // Clear past inputs
+  // เติมรหัส OTP ลงในช่องทั้ง 6 หลักให้อัตโนมัติเพื่อให้ลูกค้าสะดวกเมื่อสลับกลับมาจากแอป LINE
   for (let i = 1; i <= 6; i++) {
-    document.getElementById(`otp-${i}`).value = '';
+    const box = document.getElementById(`otp-${i}`);
+    if (box) {
+      box.value = state.otpCode.length === 6 ? state.otpCode[i - 1] : '';
+    }
+  }
+
+  // ตั้งค่าปุ่มเปิดแอป LINE พร้อมข้อความรหัส OTP อัตโนมัติ
+  let cleanOaId = String(lineOaId || db.config.line_oa_id || '').trim();
+  if (cleanOaId && !cleanOaId.startsWith('@')) {
+    cleanOaId = '@' + cleanOaId;
+  }
+  const oaDisplayEl = document.getElementById('otp-line-oa-display');
+  const lineBtnEl = document.getElementById('btn-open-line-otp');
+  const statusEl = document.getElementById('otp-line-status-text');
+
+  if (oaDisplayEl) {
+    oaDisplayEl.innerText = cleanOaId
+      ? `ส่งรหัสนี้ไปที่ LINE Official: ${cleanOaId}`
+      : 'พิมพ์รหัส OTP 6 หลักนี้ส่งในแชท LINE Official ของร้าน';
+  }
+
+  if (lineBtnEl) {
+    if (cleanOaId) {
+      lineBtnEl.href = `https://line.me/R/oaMessage/${encodeURIComponent(cleanOaId)}/?${encodeURIComponent(state.otpCode)}`;
+      lineBtnEl.style.display = 'flex';
+    } else {
+      lineBtnEl.href = `https://line.me/R/msg/text/?${encodeURIComponent(state.otpCode)}`;
+      lineBtnEl.style.display = 'flex';
+    }
+  }
+
+  if (statusEl) {
+    statusEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="color: #06C755;"></i><span>รอข้อความตอบกลับ (Reply) จาก LINE... เมื่อส่งแล้วระบบจะเข้าสู่หน้าหลักอัตโนมัติ</span>';
   }
   
   const modal = document.getElementById('otp-modal');
   modal.classList.add('active');
-  document.getElementById('otp-1').focus();
+
+  // เริ่มต้นตรวจสอบสถานะการยืนยัน OTP จาก LINE Webhook อัตโนมัติทุก 2 วินาที
+  if (state.pendingRole === 'customer') {
+    state.otpPollTimer = setInterval(pollCustomerLineOtp, 2000);
+  }
 }
 
 function moveOtpFocus(input, index) {
@@ -543,6 +658,7 @@ function moveOtpFocus(input, index) {
 }
 
 function closeOtpModal() {
+  stopOtpPolling();
   document.getElementById('otp-modal').classList.remove('active');
   state.currentUser = null;
   state.userRole = null;
@@ -577,6 +693,7 @@ async function verifyOtp() {
     const data = await res.json();
 
     if (res.ok && data && data.success && data.token) {
+      stopOtpPolling();
       state.authToken = data.token;
       state.userRole = state.pendingRole;
       state.pendingOtpToken = '';
@@ -603,14 +720,10 @@ async function verifyOtp() {
   } catch (err) {
     alert('ไม่สามารถตรวจสอบรหัส OTP กับเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง');
   }
-
-  for (let i = 1; i <= 6; i++) {
-    document.getElementById(`otp-${i}`).value = '';
-  }
-  document.getElementById('otp-1').focus();
 }
 
 function logout() {
+  stopOtpPolling();
   state.currentUser = null;
   state.userRole = null;
   state.authToken = '';
@@ -2788,9 +2901,31 @@ function deleteUser(userId) {
 }
 
 
-// ==================== 4.5 SYSTEM SETTINGS LOGIC (BANK INFO & POSITIONS CRUD) ====================
-function renderAdminSettings() {
-  // 1. Load Bank and Shop settings into inputs
+// ==================== 4.5 SYSTEM SETTINGS LOGIC (BANK INFO, LINE OA & POSITIONS CRUD) ====================
+function copyLineWebhookUrl() {
+  const input = document.getElementById('cfg-line-webhook-url');
+  if (!input) return;
+  const url = input.value;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(() => {
+      alert(`คัดลอก Webhook URL:\n${url}\nเรียบร้อยแล้ว`);
+    }).catch(() => {});
+  }
+}
+
+async function renderAdminSettings() {
+  // ดึงค่า config ล่าสุดพร้อม LINE Token/Secret จาก Cloudflare (เฉพาะ Admin)
+  try {
+    const res = await authFetch('/api/config?t=' + Date.now());
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.config) {
+        db.config = { ...db.config, ...data.config };
+      }
+    }
+  } catch (e) {}
+
+  // 1. Load Bank, Shop, and LINE OA settings into inputs
   document.getElementById('cfg-edit-shop-name').value = db.config.shop_name || '';
   document.getElementById('cfg-edit-bank-logo').value = db.config.bank_logo || '';
   document.getElementById('cfg-edit-bank-name').value = db.config.bank_name || '';
@@ -2801,6 +2936,17 @@ function renderAdminSettings() {
   const colorVal = db.config.bank_color || '#178e3d';
   document.getElementById('cfg-edit-bank-color').value = colorVal;
   document.getElementById('cfg-edit-bank-color-picker').value = colorVal;
+
+  const lineOaEl = document.getElementById('cfg-edit-line-oa-id');
+  if (lineOaEl) lineOaEl.value = db.config.line_oa_id || '';
+  const lineTokenEl = document.getElementById('cfg-edit-line-token');
+  if (lineTokenEl) lineTokenEl.value = db.config.line_channel_token || '';
+  const lineSecretEl = document.getElementById('cfg-edit-line-secret');
+  if (lineSecretEl) lineSecretEl.value = db.config.line_channel_secret || '';
+  const webhookEl = document.getElementById('cfg-line-webhook-url');
+  if (webhookEl && window.location && window.location.origin && window.location.origin.startsWith('http')) {
+    webhookEl.value = `${window.location.origin}/api/line-webhook`;
+  }
   
   // 2. Render positions table
   renderAdminPositions();
@@ -2909,6 +3055,12 @@ async function saveBankSettings() {
   const accName = document.getElementById('cfg-edit-bank-acc-name').value.trim();
   const color = document.getElementById('cfg-edit-bank-color').value.trim();
   const systemId = parseInt(document.getElementById('cfg-edit-system-id').value, 10) || 1;
+  const lineOaEl = document.getElementById('cfg-edit-line-oa-id');
+  const lineTokenEl = document.getElementById('cfg-edit-line-token');
+  const lineSecretEl = document.getElementById('cfg-edit-line-secret');
+  const lineOaId = lineOaEl ? lineOaEl.value.trim() : '';
+  const lineToken = lineTokenEl ? lineTokenEl.value.trim() : '';
+  const lineSecret = lineSecretEl ? lineSecretEl.value.trim() : '';
   
   db.config.shop_name = shopName;
   db.config.bank_logo = logo;
@@ -2917,9 +3069,22 @@ async function saveBankSettings() {
   db.config.bank_acc_name = accName;
   db.config.bank_color = color;
   db.config.system_id = systemId;
+  db.config.line_oa_id = lineOaId;
   
-  // 1. บันทึกลงในเครื่อง (LocalStorage) และอัปเดต UI ทันที
-  localStorage.setItem('pawn_config', JSON.stringify(db.config));
+  // 1. บันทึกเฉพาะข้อมูลสาธารณะลงในเครื่อง (LocalStorage) และอัปเดต UI ทันที (ไม่เก็บ Token ลับลง localStorage)
+  const publicConfig = {
+    shop_name: shopName,
+    bank_logo: logo,
+    bank_name: name,
+    bank_acc: acc,
+    bank_acc_name: accName,
+    bank_color: color,
+    system_id: systemId,
+    line_oa_id: lineOaId
+  };
+  localStorage.setItem('pawn_config', JSON.stringify(publicConfig));
+  db.config.line_channel_token = lineToken;
+  db.config.line_channel_secret = lineSecret;
   applyBankSettingsToUI();
   
   // 2. แสดงสถานะกำลังบันทึกที่ปุ่ม
@@ -2942,7 +3107,13 @@ async function saveBankSettings() {
     const res = await authFetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config: db.config }),
+      body: JSON.stringify({
+        config: {
+          ...publicConfig,
+          line_channel_token: lineToken,
+          line_channel_secret: lineSecret
+        }
+      }),
       signal: controller.signal
     });
     clearTimeout(timeoutId);

@@ -218,7 +218,7 @@ export async function onRequest(context) {
       const data = await request.json();
       const action = String(data.action || 'upsert').toLowerCase();
 
-      // --- 1. Verify login (ขั้นที่ 1: ตรวจสอบรหัสผ่านกับ D1 และออกรหัส OTP ฝั่ง Server) ---
+      // --- 1. Verify login (ตรวจสอบรหัสผ่านแอดมินกับ D1 และออก Admin Session Token ทันที ไม่ต้องใช้ OTP) ---
       if (action === 'login') {
         const userId   = String(data.user_id   || data.UserID   || '').trim().replace(/-/g, '');
         const password = String(data.password   || data.Password || '').trim();
@@ -246,25 +246,18 @@ export async function onRequest(context) {
             }
 
             const secret = await getSystemSecret(env);
-            const rnd = new Uint32Array(1);
-            crypto.getRandomValues(rnd);
-            const otpCode = String(100000 + (rnd[0] % 900000));
-            const otpHash = await hmacSha256Hex(otpCode, secret);
-
-            const otpToken = await signToken({
+            const sessionToken = await signToken({
               sub: matchedUser.UserID,
               name: matchedUser.Name,
               position: matchedUser.Position,
-              role: 'admin_otp',
-              otpHash,
-              exp: Date.now() + 5 * 60 * 1000 // OTP หมดอายุใน 5 นาที
+              role: 'admin',
+              exp: Date.now() + 12 * 60 * 60 * 1000 // อายุเซสชันแอดมิน 12 ชั่วโมง
             }, secret);
 
             return new Response(JSON.stringify({
               success: true,
-              otp_required: true,
-              otp_token: otpToken,
-              otp_preview: otpCode,
+              otp_required: false,
+              token: sessionToken,
               user: {
                 UserID: matchedUser.UserID,
                 Name: matchedUser.Name,
