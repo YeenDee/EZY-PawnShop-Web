@@ -11,7 +11,7 @@ const ALLOWED_ORIGINS = [
   'http://127.0.0.1:8000'
 ];
 
-const DEFAULT_LINE_WEBHOOK_URL = 'https://expsoon.rainbow-ocean.site/line/webhook';
+const DEFAULT_LINE_WEBHOOK_URL = 'https://ezy-pawnshop2006.rainbow-ocean.site/api/line-webhook';
 
 function getCorsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
@@ -233,9 +233,14 @@ export async function onRequest(context) {
 
         let isVerified = Boolean(session && session.status === 'VERIFIED' && Number(session.expires_at) > Date.now());
 
-        // หากยังเป็น PENDING ให้ตรวจสอบกับ Webhook URL ที่ตั้งไว้ใน config (เช่น https://expsoon.rainbow-ocean.site/line/webhook)
-        if (!isVerified && session && Number(session.expires_at) > Date.now()) {
-          const { lineWebhookUrl } = await getLineSettings(env);
+        // หากยังเป็น PENDING และผู้ดูแลระบบตั้ง Webhook URL เป็นระบบภายนอก ให้ตรวจสอบกับ URL นั้น
+        const { lineWebhookUrl } = await getLineSettings(env);
+        const isLocalWebhook = !lineWebhookUrl ||
+          lineWebhookUrl.includes('ezy-pawnshop2006.rainbow-ocean.site') ||
+          lineWebhookUrl.includes('/api/line-webhook') ||
+          lineWebhookUrl.includes('/line/webhook');
+
+        if (!isVerified && session && Number(session.expires_at) > Date.now() && !isLocalWebhook) {
           if (lineWebhookUrl && /^https?:\/\//i.test(lineWebhookUrl)) {
             try {
               const extRes = await fetch(lineWebhookUrl, {
@@ -390,8 +395,13 @@ export async function onRequest(context) {
 
           const { lineRequired, lineOaId, lineWebhookUrl, lineToken } = await getLineSettings(env);
 
-          // ส่งข้อมูลรหัส OTP ไปยัง Webhook URL ที่ตั้งค่าไว้ใน config (เช่น https://expsoon.rainbow-ocean.site/line/webhook)
-          if (lineWebhookUrl && /^https?:\/\//i.test(lineWebhookUrl)) {
+          const isLocalWebhook = !lineWebhookUrl ||
+            lineWebhookUrl.includes('ezy-pawnshop2006.rainbow-ocean.site') ||
+            lineWebhookUrl.includes('/api/line-webhook') ||
+            lineWebhookUrl.includes('/line/webhook');
+
+          // หากตั้งค่า Webhook เป็นเซิร์ฟเวอร์ภายนอก ให้ส่งข้อมูลรหัส OTP ไปยัง Webhook URL นั้น
+          if (!isLocalWebhook && /^https?:\/\//i.test(lineWebhookUrl)) {
             try {
               await fetch(lineWebhookUrl, {
                 method: 'POST',

@@ -38,7 +38,7 @@ const DEFAULT_CONFIG = {
   bank_acc_name: 'บจ. อีซี่ โรงรับจำนำ 2006',
   system_id: 3,
   line_oa_id: '',
-  line_webhook_url: 'https://expsoon.rainbow-ocean.site/line/webhook'
+  line_webhook_url: 'https://ezy-pawnshop2006.rainbow-ocean.site/api/line-webhook'
 };
 
 const DEFAULT_SYNC_HISTORY = [
@@ -2947,7 +2947,7 @@ async function renderAdminSettings() {
   if (lineSecretEl) lineSecretEl.value = db.config.line_channel_secret || '';
   const webhookEl = document.getElementById('cfg-line-webhook-url');
   if (webhookEl) {
-    webhookEl.value = db.config.line_webhook_url || 'https://expsoon.rainbow-ocean.site/line/webhook';
+    webhookEl.value = db.config.line_webhook_url || 'https://ezy-pawnshop2006.rainbow-ocean.site/api/line-webhook';
   }
   
   // 2. Render positions table

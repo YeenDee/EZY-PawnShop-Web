@@ -6,5 +6,5 @@
   "bank_acc": "026-8-91256-2",
   "bank_acc_name": "บจ. อีซี่ โรงรับจำนำ 2006",
   "system_id": 3,
-  "line_webhook_url": "https://expsoon.rainbow-ocean.site/line/webhook"
+  "line_webhook_url": "https://ezy-pawnshop2006.rainbow-ocean.site/api/line-webhook"
 }

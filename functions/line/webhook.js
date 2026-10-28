@@ -38,7 +38,7 @@ async function sendLineReply(replyToken, channelToken, textMessage) {
     return;
   }
   try {
-    await fetch('https://api.line.me/v2/bot/message/reply', {
+    const res = await fetch('https://api.line.me/v2/bot/message/reply', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -54,6 +54,10 @@ async function sendLineReply(replyToken, channelToken, textMessage) {
         ]
       })
     });
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('[LINE Reply API Error]:', res.status, errText);
+    }
   } catch (e) {
     console.error('[LINE Reply Error]:', e);
   }
